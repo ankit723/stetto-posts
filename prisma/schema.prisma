@@ -1,0 +1,67 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum UserRole {
+  ADMIN
+  USER
+}
+
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  password  String
+  firstName String
+  lastName  String
+  role      UserRole @default(USER)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  photoConfigs PhotoConfig[]
+  collections Collection[]
+  photos     Photo[]
+}
+
+model PhotoConfig {
+  id        String   @id @default(uuid())
+  dimensions Json     // { width: number, height: number }
+  position   Json     // { x: number, y: number }
+  rotation   Float    @default(0) // Rotation in degrees
+  collectionId String
+  collection Collection @relation(fields: [collectionId], references: [id])
+  userId String
+  user User @relation(fields: [userId], references: [id])
+  watermarkId String?
+  watermark Photo? @relation(fields: [watermarkId], references: [id], name: "WatermarkConfig")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Photo {
+  id        String   @id @default(uuid())
+  url       String
+  isWatermark Boolean @default(false)
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id])
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  collections Collection[]
+  photoConfigs PhotoConfig[] @relation("WatermarkConfig")
+}
+
+model Collection {
+  id        String   @id @default(uuid())
+  name      String
+  description String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  photos    Photo[]
+  user      User     @relation(fields: [userId], references: [id])
+  userId    String
+  photoConfigs PhotoConfig[]
+}
