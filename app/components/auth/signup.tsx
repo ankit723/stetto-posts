@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { useState } from 'react'
 import { signup } from '@/app/auth/actions'
+import { Loader2 } from 'lucide-react'
 
 type AuthResult = 
   | { error: string }
@@ -120,7 +121,11 @@ export default function SignupPage() {
                     : 'bg-primary hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-ring/50'
                 }`}
               >
-                {isLoading ? 'Creating account...' : 'Create account'}
+                {isLoading ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Creating account...
+                  </>
+                ) : 'Create account'}
               </button>
             </div>
           </form>

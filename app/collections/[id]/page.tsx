@@ -12,7 +12,9 @@ import WatermarkEditor from '@/components/watermark/WatermarkEditor'
 import WatermarkedImage from '@/components/watermark/WatermarkedImage'
 import {
   Dialog,
-  DialogContent
+  DialogContent,
+  DialogHeader,
+  DialogTitle
 } from '@/components/ui/dialog'
 
 interface Photo {
@@ -557,6 +559,9 @@ const CollectionPage = () => {
       {/* Watermark Editor Modal */}
       <Dialog open={isWatermarkModalOpen} onOpenChange={setIsWatermarkModalOpen}>
         <DialogContent className="max-w-6xl w-[95vw]">
+          <DialogHeader>
+            <DialogTitle className="sr-only">Watermark Editor</DialogTitle>
+          </DialogHeader>
           {isLoadingWatermarks ? (
             <div className="flex items-center justify-center py-12">
               <Loader2 className="h-8 w-8 animate-spin text-primary mr-2" />

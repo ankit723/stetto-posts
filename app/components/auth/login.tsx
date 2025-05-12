@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { useState } from 'react'
 import { login } from '@/app/auth/actions'
+import { Loader2 } from 'lucide-react'
 
 type AuthResult = 
   | { error: string }
@@ -82,7 +83,11 @@ export default function LoginPage() {
                   : 'bg-primary hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-ring/50'
               }`}
             >
-              {isLoading ? 'Signing in...' : 'Sign in'}
+              {isLoading ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Signing in...
+                </>
+              ) : 'Sign in'}
             </button>
           </div>
         </form>

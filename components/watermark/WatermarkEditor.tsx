@@ -10,6 +10,8 @@ import { Stage, Layer, Image as KonvaImage, Transformer } from 'react-konva'
 import Konva from 'konva'
 import { KonvaEventObject } from 'konva/lib/Node'
 import Image from 'next/image'
+import { Checkbox } from '@/components/ui/checkbox'
+import { Label } from '@/components/ui/label'
 
 interface Watermark {
   id: string
@@ -64,12 +66,16 @@ const WatermarkEditor = ({
   const [loading, setLoading] = useState<boolean>(false)
   const [photoSize, setPhotoSize] = useState<{ width: number, height: number }>({ width: 0, height: 0 })
   const [stageSize, setStageSize] = useState<{ width: number, height: number }>({ width: 0, height: 0 })
-  const [photoScale, setPhotoScale] = useState<{ scaleX: number, scaleY: number }>({ scaleX: 1, scaleY: 1 })
+  const [displayScale, setDisplayScale] = useState<number>(1)
+  const [maintainAspectRatio, setMaintainAspectRatio] = useState<boolean>(true)
+  const [originalAspectRatio, setOriginalAspectRatio] = useState<number>(1)
   
   const containerRef = useRef<HTMLDivElement>(null)
   const photoRef = useRef<HTMLImageElement>(null)
   const watermarkRef = useRef<Konva.Image>(null)
   const transformerRef = useRef<Konva.Transformer>(null)
+  const stageRef = useRef<Konva.Stage>(null)
+  const layerRef = useRef<Konva.Layer>(null)
   
   // State for Konva images
   const [photoNode, setPhotoNode] = useState<HTMLImageElement | null>(null)
@@ -78,9 +84,12 @@ const WatermarkEditor = ({
   // Load the photo dimensions once it's loaded
   useEffect(() => {
     if (photoRef.current && photoRef.current.complete) {
+      const naturalWidth = photoRef.current.naturalWidth
+      const naturalHeight = photoRef.current.naturalHeight
+      
       setPhotoSize({
-        width: photoRef.current.naturalWidth,
-        height: photoRef.current.naturalHeight
+        width: naturalWidth,
+        height: naturalHeight
       })
     }
     
@@ -89,6 +98,12 @@ const WatermarkEditor = ({
     image.src = photoUrl
     image.onload = () => {
       setPhotoNode(image)
+      
+      // Update photo size
+      setPhotoSize({
+        width: image.width,
+        height: image.height
+      })
     }
   }, [photoUrl])
   
@@ -101,44 +116,56 @@ const WatermarkEditor = ({
         image.src = selectedWatermark.url
         image.onload = () => {
           setWatermarkNode(image)
+          setOriginalAspectRatio(image.naturalWidth / image.naturalHeight)
         }
       }
     }
   }, [selectedWatermarkId, watermarks])
   
-  // Update stage size when container size changes
+  // Update stage size and calculate display scale when container size changes
   useEffect(() => {
-    const updateStageSize = () => {
-      if (containerRef.current) {
+    const updateStageSizeAndScale = () => {
+      if (containerRef.current && photoSize.width > 0 && photoSize.height > 0) {
+        const containerWidth = containerRef.current.clientWidth
+        const containerHeight = containerRef.current.clientHeight
+        
+        // Calculate the scale to fit the image in the container
+        const scaleX = containerWidth / photoSize.width
+        const scaleY = containerHeight / photoSize.height
+        const scale = Math.min(scaleX, scaleY, 1) // Never scale up, only down
+        
+        setDisplayScale(scale)
+        
+        // Set the stage size to the actual image dimensions scaled to fit the container
         setStageSize({
-          width: containerRef.current.clientWidth,
-          height: containerRef.current.clientHeight
+          width: photoSize.width * scale,
+          height: photoSize.height * scale
         })
       }
     }
     
-    updateStageSize()
-    window.addEventListener('resize', updateStageSize)
+    updateStageSizeAndScale()
+    window.addEventListener('resize', updateStageSizeAndScale)
     
     return () => {
-      window.removeEventListener('resize', updateStageSize)
+      window.removeEventListener('resize', updateStageSizeAndScale)
     }
-  }, [])
+  }, [photoSize, containerRef])
   
   // Center the watermark when first selected or when changing watermarks
   useEffect(() => {
-    if (selectedWatermarkId && containerRef.current) {
+    if (selectedWatermarkId && photoSize.width > 0 && photoSize.height > 0) {
       // If no initial config, center the watermark
       if (!initialConfig || initialConfig.watermarkId !== selectedWatermarkId) {
-        const containerRect = containerRef.current.getBoundingClientRect()
         setPosition({
-          x: (containerRect.width) / 2,
-          y: (containerRect.height) / 2
+          x: photoSize.width / 2,
+          y: photoSize.height / 2
         })
         setRotation(0)
+        setDimensions({ width: 200, height: 200 })
       }
     }
-  }, [selectedWatermarkId, dimensions, initialConfig])
+  }, [selectedWatermarkId, photoSize, initialConfig])
   
   // Attach transformer to watermark when it's available
   useEffect(() => {
@@ -148,77 +175,68 @@ const WatermarkEditor = ({
     }
   }, [watermarkNode])
   
-  // Calculate photo scale to fit container
-  useEffect(() => {
-    if (photoNode && stageSize.width > 0 && stageSize.height > 0) {
-      const imageWidth = photoNode.width
-      const imageHeight = photoNode.height
-      
-      const scaleX = stageSize.width / imageWidth
-      const scaleY = stageSize.height / imageHeight
-      
-      // Use the smaller scale to ensure the image fits within the container
-      const scale = Math.min(scaleX, scaleY)
-      
-      setPhotoScale({
-        scaleX: scale,
-        scaleY: scale
-      })
-    }
-  }, [photoNode, stageSize])
-  
   const handleSave = () => {
     if (!selectedWatermarkId) {
       toast.error('Please select a watermark')
       return
     }
     
-    // Scale the position and dimensions to match the original photo size
-    // This ensures consistent positioning regardless of the display size
-    let scaledConfig: WatermarkConfig
-    
-    if (containerRef.current && photoSize.width > 0 && photoSize.height > 0) {
-      const containerRect = containerRef.current.getBoundingClientRect()
-      const scaleX = photoSize.width / containerRect.width
-      const scaleY = photoSize.height / containerRect.height
-      
-      // Adjust position to account for the centered rotation point
-      const adjustedPosition = {
-        x: position.x - dimensions.width / 2,
-        y: position.y - dimensions.height / 2
-      }
-      
-      scaledConfig = {
-        watermarkId: selectedWatermarkId,
-        position: {
-          x: adjustedPosition.x * scaleX,
-          y: adjustedPosition.y * scaleY
-        },
-        dimensions: {
-          width: dimensions.width * scaleX,
-          height: dimensions.height * scaleY
-        },
-        rotation: rotation
-      }
-    } else {
-      // Fallback if we couldn't get the container size
-      const adjustedPosition = {
-        x: position.x - dimensions.width / 2,
-        y: position.y - dimensions.height / 2
-      }
-      
-      scaledConfig = {
-        watermarkId: selectedWatermarkId,
-        position: adjustedPosition,
-        dimensions,
-        rotation
-      }
+    // Calculate the position in the original photo coordinates
+    // Since we're working with the actual image dimensions now,
+    // we just need to adjust for the centered rotation point
+    const adjustedPosition = {
+      x: position.x - dimensions.width / 2,
+      y: position.y - dimensions.height / 2
     }
     
-    onSave(scaledConfig)
+    const config: WatermarkConfig = {
+      watermarkId: selectedWatermarkId,
+      position: adjustedPosition,
+      dimensions,
+      rotation
+    }
+    
+    onSave(config)
   }
   
   const selectedWatermark = watermarks.find(w => w.id === selectedWatermarkId)
+  
+  // Function to handle watermark transform
+  const handleTransformEnd = () => {
+    if (watermarkRef.current) {
+      const node = watermarkRef.current
+      
+      // Get the new dimensions
+      const newWidth = node.width() * node.scaleX()
+      const newHeight = node.height() * node.scaleY()
+      
+      // Reset scale to 1
+      node.scaleX(1)
+      node.scaleY(1)
+      
+      // Set new dimensions
+      node.width(newWidth)
+      node.height(newHeight)
+      
+      // Update state with the actual dimensions (accounting for display scale)
+      setDimensions({
+        width: newWidth / displayScale,
+        height: newHeight / displayScale
+      })
+      
+      // Update position (accounting for display scale)
+      setPosition({
+        x: node.x() / displayScale,
+        y: node.y() / displayScale
+      })
+      
+      // Update rotation
+      setRotation(node.rotation())
+      
+      // Redraw the layer
+      node.getLayer()?.batchDraw()
+    }
+  }
   
   return (
     <div className="flex flex-col h-full">
@@ -233,7 +251,7 @@ const WatermarkEditor = ({
         <div className="lg:col-span-2">
           <div 
             ref={containerRef} 
-            className="relative bg-gray-100 border rounded-lg overflow-hidden"
+            className="relative bg-gray-100 border rounded-lg overflow-hidden flex items-center justify-center"
             style={{ height: '70vh' }}
           >
             {/* Hidden image for reference */}
@@ -253,84 +271,87 @@ const WatermarkEditor = ({
               }}
             />
             
-            {stageSize.width > 0 && stageSize.height > 0 && (
-              <Stage width={stageSize.width} height={stageSize.height}>
-                <Layer>
-                  {photoNode && (
-                    <KonvaImage
-                      image={photoNode}
-                      x={(stageSize.width - (photoNode.width * photoScale.scaleX)) / 2}
-                      y={(stageSize.height - (photoNode.height * photoScale.scaleY)) / 2}
-                      scaleX={photoScale.scaleX}
-                      scaleY={photoScale.scaleY}
-                    />
-                  )}
+            {stageSize.width > 0 && stageSize.height > 0 && photoNode && (
+              <Stage 
+                ref={stageRef}
+                width={stageSize.width} 
+                height={stageSize.height}
+                style={{ 
+                  boxShadow: '0 0 10px rgba(0,0,0,0.1)',
+                  maxWidth: '100%', 
+                  maxHeight: '100%' 
+                }}
+              >
+                <Layer ref={layerRef}>
+                  {/* Photo Image */}
+                  <KonvaImage
+                    image={photoNode}
+                    width={photoSize.width * displayScale}
+                    height={photoSize.height * displayScale}
+                  />
                   
+                  {/* Watermark Image */}
                   {watermarkNode && selectedWatermarkId && (
                     <KonvaImage
                       ref={watermarkRef}
                       image={watermarkNode}
-                      x={position.x}
-                      y={position.y}
-                      width={dimensions.width}
-                      height={dimensions.height}
+                      x={position.x * displayScale}
+                      y={position.y * displayScale}
+                      width={dimensions.width * displayScale}
+                      height={dimensions.height * displayScale}
                       rotation={rotation}
                       draggable
-                      offsetX={dimensions.width / 2}
-                      offsetY={dimensions.height / 2}
-                      onDragEnd={(e: KonvaEventObject<DragEvent>) => {
+                      offsetX={(dimensions.width * displayScale) / 2}
+                      offsetY={(dimensions.height * displayScale) / 2}
+                      onDragEnd={(e) => {
                         setPosition({
-                          x: e.target.x(),
-                          y: e.target.y()
+                          x: e.target.x() / displayScale,
+                          y: e.target.y() / displayScale
                         })
                       }}
-                      onTransform={() => {
-                        if (watermarkRef.current) {
-                          const node = watermarkRef.current
-                          const scaleX = node.scaleX()
-                          const scaleY = node.scaleY()
-                          
-                          // Reset scale and update width and height
-                          node.scaleX(1)
-                          node.scaleY(1)
-                          
-                          setDimensions({
-                            width: Math.max(5, node.width() * scaleX),
-                            height: Math.max(5, node.height() * scaleY)
-                          })
-                          
-                          setRotation(node.rotation())
-                          setPosition({
-                            x: node.x(),
-                            y: node.y()
-                          })
-                        }
-                      }}
+                      onTransformEnd={handleTransformEnd}
                     />
                   )}
                   
+                  {/* Transformer */}
                   {watermarkNode && selectedWatermarkId && (
                     <Transformer
                       ref={transformerRef}
-                      boundBoxFunc={(oldBox: BoundBox, newBox: BoundBox) => {
-                        // Limit size
-                        if (newBox.width < 5 || newBox.height < 5) {
+                      boundBoxFunc={(oldBox, newBox) => {
+                        // Limit minimum size
+                        if (newBox.width < 10 || newBox.height < 10) {
                           return oldBox
                         }
                         return newBox
                       }}
                       rotationSnaps={[0, 45, 90, 135, 180, 225, 270, 315]}
                       enabledAnchors={['top-left', 'top-right', 'bottom-left', 'bottom-right']}
-                      resizeEnabled={true}
+                      anchorSize={10}
+                      anchorCornerRadius={5}
+                      borderStroke="#2563eb"
+                      borderStrokeWidth={2}
+                      anchorStroke="#2563eb"
+                      anchorFill="#ffffff"
                       rotateEnabled={true}
-                      keepRatio={false}
-                      centeredScaling={true}
+                      resizeEnabled={true}
                     />
                   )}
                 </Layer>
               </Stage>
             )}
+            
+            {(!photoNode || stageSize.width === 0) && (
+              <div className="flex items-center justify-center w-full h-full">
+                <Loader2 className="h-8 w-8 animate-spin text-primary" />
+              </div>
+            )}
           </div>
+          
+          {selectedWatermarkId && (
+            <div className="mt-4 text-sm text-gray-500">
+              <p>Tip: Click and drag the watermark to position it. Use the handles to resize, and the rotation control to rotate.</p>
+            </div>
+          )}
         </div>
         
         <div className="space-y-4">
@@ -411,6 +432,148 @@ const WatermarkEditor = ({
                     <RotateCw className="h-4 w-4" />
                   </Button>
                   <span className="text-sm w-12 text-right">{Math.round(rotation)}°</span>
+                </div>
+              </div>
+            </Card>
+          )}
+          
+          {selectedWatermarkId && (
+            <Card className="p-4">
+              <h3 className="text-sm font-medium mb-3">Size</h3>
+              <div className="space-y-4">
+                <div className="flex items-center mb-2 gap-2">
+                  <Checkbox
+                    id="maintain-aspect-ratio"
+                    checked={maintainAspectRatio}
+                    onCheckedChange={(checked) => setMaintainAspectRatio(checked as boolean)}
+                  />
+                  <Label htmlFor="maintain-aspect-ratio" className="text-xs text-gray-700 cursor-pointer">
+                    Maintain aspect ratio
+                  </Label>
+                </div>
+                
+                <div>
+                  <div className="flex justify-between mb-2">
+                    <label className="text-xs text-gray-500">Width</label>
+                    <span className="text-xs text-gray-500">{Math.round(dimensions.width)}px</span>
+                  </div>
+                  <Slider
+                    value={[dimensions.width]}
+                    min={50}
+                    max={photoSize.width}
+                    step={1}
+                    onValueChange={(values) => {
+                      const newWidth = values[0]
+                      let newHeight = dimensions.height
+                      
+                      if (maintainAspectRatio && originalAspectRatio) {
+                        newHeight = newWidth / originalAspectRatio
+                      }
+                      
+                      const updatedDimensions = {
+                        width: newWidth,
+                        height: newHeight
+                      }
+                      
+                      setDimensions(updatedDimensions)
+                      
+                      if (watermarkRef.current) {
+                        watermarkRef.current.width(updatedDimensions.width * displayScale)
+                        watermarkRef.current.height(updatedDimensions.height * displayScale)
+                        watermarkRef.current.offsetX((updatedDimensions.width * displayScale) / 2)
+                        watermarkRef.current.offsetY((updatedDimensions.height * displayScale) / 2)
+                        watermarkRef.current.getLayer()?.batchDraw()
+                      }
+                    }}
+                    className="flex-1"
+                  />
+                </div>
+                
+                <div>
+                  <div className="flex justify-between mb-2">
+                    <label className="text-xs text-gray-500">Height</label>
+                    <span className="text-xs text-gray-500">{Math.round(dimensions.height)}px</span>
+                  </div>
+                  <Slider
+                    value={[dimensions.height]}
+                    min={50}
+                    max={photoSize.height}
+                    step={1}
+                    onValueChange={(values) => {
+                      const newHeight = values[0]
+                      let newWidth = dimensions.width
+                      
+                      if (maintainAspectRatio && originalAspectRatio) {
+                        newWidth = newHeight * originalAspectRatio
+                      }
+                      
+                      const updatedDimensions = {
+                        width: newWidth,
+                        height: newHeight
+                      }
+                      
+                      setDimensions(updatedDimensions)
+                      
+                      if (watermarkRef.current) {
+                        watermarkRef.current.width(updatedDimensions.width * displayScale)
+                        watermarkRef.current.height(updatedDimensions.height * displayScale)
+                        watermarkRef.current.offsetX((updatedDimensions.width * displayScale) / 2)
+                        watermarkRef.current.offsetY((updatedDimensions.height * displayScale) / 2)
+                        watermarkRef.current.getLayer()?.batchDraw()
+                      }
+                    }}
+                    className="flex-1"
+                  />
+                </div>
+                
+                <div className="flex justify-between">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      // Reset to default size
+                      const defaultSize = { width: 200, height: 200 }
+                      setDimensions(defaultSize)
+                      
+                      if (watermarkRef.current) {
+                        watermarkRef.current.width(defaultSize.width * displayScale)
+                        watermarkRef.current.height(defaultSize.height * displayScale)
+                        watermarkRef.current.offsetX((defaultSize.width * displayScale) / 2)
+                        watermarkRef.current.offsetY((defaultSize.height * displayScale) / 2)
+                        watermarkRef.current.getLayer()?.batchDraw()
+                      }
+                    }}
+                  >
+                    Reset Size
+                  </Button>
+                  
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      // Apply original aspect ratio
+                      if (watermarkNode) {
+                        const newHeight = dimensions.width / originalAspectRatio
+                        
+                        const updatedDimensions = {
+                          width: dimensions.width,
+                          height: newHeight
+                        }
+                        
+                        setDimensions(updatedDimensions)
+                        
+                        if (watermarkRef.current) {
+                          watermarkRef.current.width(updatedDimensions.width * displayScale)
+                          watermarkRef.current.height(updatedDimensions.height * displayScale)
+                          watermarkRef.current.offsetX((updatedDimensions.width * displayScale) / 2)
+                          watermarkRef.current.offsetY((updatedDimensions.height * displayScale) / 2)
+                          watermarkRef.current.getLayer()?.batchDraw()
+                        }
+                      }
+                    }}
+                  >
+                    Apply Original Ratio
+                  </Button>
                 </div>
               </div>
             </Card>

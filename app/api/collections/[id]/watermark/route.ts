@@ -8,7 +8,7 @@ export async function GET(
   { params }: { params: { id: string } }
 ) {
   const supabase = createClient()
-  const { id } = params
+  const { id } = await params
 
   try {
     // Verify authentication
