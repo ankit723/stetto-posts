@@ -33,7 +33,7 @@ model PhotoConfig {
   position   Json     // { x: number, y: number }
   rotation   Float    @default(0) // Rotation in degrees
   collectionId String
-  collection Collection @relation(fields: [collectionId], references: [id])
+  collection Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
   userId String
   user User @relation(fields: [userId], references: [id])
   watermarkId String?

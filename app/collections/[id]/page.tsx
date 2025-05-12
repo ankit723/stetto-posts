@@ -4,7 +4,7 @@ import React, { useState, useEffect } from 'react'
 import { useParams } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
-import { Loader2, Download, Share2, ArrowLeft, Image as ImageIcon, Stamp } from 'lucide-react'
+import { Loader2, Download, Share2, ArrowLeft, Image as ImageIcon, Stamp, ChevronDown } from 'lucide-react'
 import { toast } from 'sonner'
 import Link from 'next/link'
 import Image from 'next/image'
@@ -16,6 +16,13 @@ import {
   DialogHeader,
   DialogTitle
 } from '@/components/ui/dialog'
+import JSZip from 'jszip'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 
 interface Photo {
   id: string
@@ -131,6 +138,7 @@ const CollectionPage = () => {
   const [isLoadingWatermarks, setIsLoadingWatermarks] = useState(false)
   const [isDownloadingCollection, setIsDownloadingCollection] = useState(false)
   const [isSavingConfig, setIsSavingConfig] = useState(false)
+  const [downloadingBatch, setDownloadingBatch] = useState<string | null>(null)
 
   useEffect(() => {
     const fetchCollection = async () => {
@@ -332,17 +340,44 @@ const CollectionPage = () => {
     
     try {
       setIsDownloadingCollection(true)
+      toast.info(`Starting download of ${collection?.photos.length} photos. This may take a while for large collections...`)
       
       // Use fetch with blob response type for downloading
-      const response = await fetch(`/api/collections/${id}/download`)
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), 5 * 60 * 1000) // 5 minute timeout
+      
+      const response = await fetch(`/api/collections/${id}/download`, {
+        signal: controller.signal,
+        cache: 'no-store' // Ensure we don't get a cached response
+      })
+      
+      clearTimeout(timeoutId)
       
       if (!response.ok) {
-        const errorData = await response.json()
-        throw new Error(errorData.error || 'Failed to download collection')
+        if (response.headers.get('Content-Type')?.includes('application/json')) {
+          const errorData = await response.json()
+          throw new Error(errorData.error || 'Failed to download collection')
+        } else {
+          throw new Error(`Server error: ${response.status} ${response.statusText}`)
+        }
       }
       
       // Get the blob from the response
       const blob = await response.blob()
+      
+      // Check if we got a zip file or just a text file (which might contain an error)
+      if (blob.type === 'text/plain' && blob.size < 10000) {
+        // Small text file might be an error message
+        const text = await blob.text()
+        if (text.toLowerCase().includes('error') || text.toLowerCase().includes('fail')) {
+          throw new Error(text)
+        }
+      }
+      
+      // Check if the zip file is too small (might be empty or contain only the README)
+      if (blob.type === 'application/zip' && blob.size < 1000) {
+        toast.warning('The downloaded file is very small and may not contain all photos')
+      }
       
       // Create a download link
       const downloadUrl = URL.createObjectURL(blob)
@@ -371,10 +406,47 @@ const CollectionPage = () => {
       document.body.removeChild(a)
       URL.revokeObjectURL(downloadUrl)
       
-      toast.success('Collection downloaded successfully')
+      // If the file contains a processing report, show a notification
+      if (blob.size > 1000) {
+        const zip = new JSZip()
+        try {
+          const zipContents = await zip.loadAsync(blob)
+          if (zipContents.files['processing_report.txt']) {
+            const reportContent = await zipContents.files['processing_report.txt'].async('text')
+            const failedMatch = reportContent.match(/Failed to process: (\d+)/)
+            const totalMatch = reportContent.match(/Total photos: (\d+)/)
+            const successMatch = reportContent.match(/Successfully processed: (\d+)/)
+            
+            if (failedMatch && parseInt(failedMatch[1]) > 0) {
+              const failed = parseInt(failedMatch[1])
+              const total = totalMatch ? parseInt(totalMatch[1]) : (collection?.photos.length || 0)
+              const success = successMatch ? parseInt(successMatch[1]) : (total - failed)
+              
+              if (success === 0) {
+                toast.error('Failed to process any photos. Please try again later or contact support.')
+              } else if (failed > 0) {
+                const percentFailed = Math.round((failed / total) * 100)
+                if (percentFailed > 50) {
+                  toast.error(`${percentFailed}% of photos failed processing. Please try again later.`)
+                } else {
+                  toast.warning(`${success} photos processed successfully, ${failed} photos failed. See the processing_report.txt in the zip file for details.`)
+                }
+              }
+            }
+          }
+        } catch (e) {
+          console.error('Error checking zip contents:', e)
+        }
+      }
+      
+      toast.success(`Collection downloaded successfully (${Math.round(blob.size / 1024)} KB)`)
     } catch (error) {
       console.error('Error downloading collection:', error)
-      toast.error('Failed to download collection. Please try again.')
+      if (error.name === 'AbortError') {
+        toast.error('Download timed out. The collection may be too large. Please try again later.')
+      } else {
+        toast.error(`Failed to download collection: ${error.message || 'Unknown error'}. Please try again later.`)
+      }
     } finally {
       setIsDownloadingCollection(false)
     }
@@ -521,26 +593,24 @@ const CollectionPage = () => {
 
   if (!collection) {
     return (
-      <div className="container mx-auto p-6 text-center">
-        <div className="bg-red-50 p-8 rounded-lg">
-          <h1 className="text-xl font-semibold text-red-700 mb-2">Collection Not Found</h1>
-          <p className="mb-4">The collection you&apos;re looking for doesn&apos;t exist or has been removed.</p>
-          <Link href="/">
-            <Button>
-              <ArrowLeft className="mr-2 h-4 w-4" /> Back to Home
-            </Button>
-          </Link>
-        </div>
+      <div className="container mx-auto p-6 flex flex-col items-center justify-center min-h-[60vh]">
+        <p className="text-lg text-red-500">Collection not found</p>
+        <Button asChild className="mt-4">
+          <Link href="/collections">Back to Collections</Link>
+        </Button>
       </div>
     )
   }
 
   return (
-    <div className="container mx-auto p-6">
-      <div className="mb-8">
-        <Link href="/collections" className="inline-flex items-center text-blue-600 hover:text-blue-800 mb-4">
-          <ArrowLeft className="mr-1 h-4 w-4" /> Back to Collections
-        </Link>
+    <div className="container mx-auto p-6 space-y-6">
+      <div className="flex flex-col space-y-6">
+        <div className="flex items-center">
+          <Link href="/collections" className="flex items-center text-gray-600 hover:text-gray-900 mr-4">
+            <ArrowLeft className="h-4 w-4 mr-1" /> Back to Collections
+          </Link>
+        </div>
+        
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
           <div>
             <h1 className="text-3xl font-bold">{collection.name}</h1>
@@ -567,7 +637,7 @@ const CollectionPage = () => {
               <Stamp className="mr-2 h-4 w-4" /> 
               {watermarkConfig ? "Edit Watermark" : "Add Watermark"}
             </Button>
-            {watermarkConfig && (
+            {watermarkConfig && collection.photos.length > 0 && (
               <Button 
                 onClick={handleDownloadCollection}
                 disabled={isDownloadingCollection}
