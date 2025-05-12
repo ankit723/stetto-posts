@@ -114,7 +114,7 @@ const AdminPage = () => {
     if (isAdmin) {
       fetchCollections()
     }
-  }, [isAdmin, fetchCollections])
+  }, [isAdmin])
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target

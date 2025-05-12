@@ -50,6 +50,72 @@ interface WatermarkConfig {
   watermark?: Watermark
 }
 
+// Add a new PhotoItem component to handle both watermarked and non-watermarked photos
+const PhotoItem = ({ 
+  photo, 
+  index, 
+  collectionName, 
+  watermarkConfig, 
+  isLightbox = false,
+  onLoad
+}: { 
+  photo: Photo, 
+  index: number, 
+  collectionName: string, 
+  watermarkConfig: WatermarkConfig | null,
+  isLightbox?: boolean,
+  onLoad?: () => void
+}) => {
+  const [loaded, setLoaded] = useState(false)
+
+  const handleImageLoad = () => {
+    setLoaded(true)
+    if (onLoad) onLoad()
+  }
+
+  if (watermarkConfig && watermarkConfig.watermark) {
+    return (
+      <WatermarkedImage
+        photoUrl={photo.url}
+        watermarkUrl={watermarkConfig.watermark.url}
+        watermarkConfig={{
+          position: watermarkConfig.position,
+          dimensions: watermarkConfig.dimensions,
+          rotation: watermarkConfig.rotation
+        }}
+        alt={`Photo ${index + 1} in ${collectionName}`}
+        className={isLightbox ? "max-h-[80vh] max-w-full" : "w-full h-full object-cover"}
+        onLoad={handleImageLoad}
+      />
+    )
+  }
+
+  return (
+    <>
+      {!loaded && (
+        <div className="absolute inset-0 flex items-center justify-center bg-gray-100 z-10">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        </div>
+      )}
+      <Image 
+        src={photo.url} 
+        alt={`Photo ${index + 1} in ${collectionName}`}
+        className={isLightbox 
+          ? "max-h-[80vh] max-w-full object-contain transition-opacity duration-300" 
+          : "w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
+        }
+        width={isLightbox ? 1920 : 800}
+        height={isLightbox ? 1080 : 800}
+        sizes={isLightbox ? "100vw" : "(max-width: 640px) 100vw, (max-width: 768px) 50vw, (max-width: 1024px) 33vw, 25vw"}
+        quality={isLightbox ? 95 : 90}
+        priority={isLightbox || index < 8}
+        onLoad={handleImageLoad}
+        style={{ opacity: loaded ? 1 : 0 }}
+      />
+    </>
+  )
+}
+
 const CollectionPage = () => {
   const params = useParams()
   const { id } = params
@@ -332,30 +398,13 @@ const CollectionPage = () => {
               className="aspect-square relative cursor-pointer" 
               onClick={() => handlePhotoClick(index)}
             >
-              {watermarkConfig && watermarkConfig.watermark ? (
-                <WatermarkedImage
-                  photoUrl={photo.url}
-                  watermarkUrl={watermarkConfig.watermark.url}
-                  watermarkConfig={{
-                    position: watermarkConfig.position,
-                    dimensions: watermarkConfig.dimensions,
-                    rotation: watermarkConfig.rotation
-                  }}
-                  alt={`Photo ${index + 1} in ${collection.name}`}
-                  className="w-full h-full object-cover"
-                />
-              ) : (
-                <>
-                  <Image 
-                    src={photo.url} 
-                    alt={`Photo ${index + 1} in ${collection.name}`}
-                    className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
-                    width={100}
-                    height={100}
-                  />
-                  <div className="absolute inset-0 bg-black opacity-0 group-hover:opacity-30 transition-opacity duration-300"></div>
-                </>
-              )}
+              <PhotoItem 
+                photo={photo}
+                index={index}
+                collectionName={collection.name}
+                watermarkConfig={watermarkConfig}
+              />
+              <div className="absolute inset-0 bg-black opacity-0 group-hover:opacity-30 transition-opacity duration-300 pointer-events-none"></div>
             </div>
             <div className="p-3 flex justify-end">
               <Button 
@@ -404,27 +453,13 @@ const CollectionPage = () => {
           </button>
           
           <div className="flex items-center justify-center">
-            {watermarkConfig && watermarkConfig.watermark ? (
-              <WatermarkedImage
-                photoUrl={activePhoto.url}
-                watermarkUrl={watermarkConfig.watermark.url}
-                watermarkConfig={{
-                  position: watermarkConfig.position,
-                  dimensions: watermarkConfig.dimensions,
-                  rotation: watermarkConfig.rotation
-                }}
-                alt={`Photo ${activePhotoIndex + 1} in ${collection.name}`}
-                className="max-h-[80vh] max-w-full"
-              />
-            ) : (
-              <Image 
-                src={activePhoto.url} 
-                alt={`Photo ${activePhotoIndex + 1} in ${collection.name}`}
-                className="max-h-[80vh] max-w-full object-contain"
-                width={100}
-                height={100}
-              />
-            )}
+            <PhotoItem 
+              photo={activePhoto}
+              index={activePhotoIndex}
+              collectionName={collection.name}
+              watermarkConfig={watermarkConfig}
+              isLightbox={true}
+            />
           </div>
           
           <div className="absolute inset-x-0 bottom-4 flex justify-center space-x-4">

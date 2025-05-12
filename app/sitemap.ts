@@ -5,37 +5,37 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
 
   const staticRoutes = [
     {
-      url: 'https://stettoposts.com',
+      url: 'https://stetto.live',
       lastModified: new Date(),
       changeFrequency: 'monthly' as const,
       priority: 1.0,
     },
     {
-      url: 'https://stettoposts.com/auth/login',
+      url: 'https://stetto.live/auth/login',
       lastModified: new Date(),
       changeFrequency: 'monthly' as const,
       priority: 0.8,
     },
     {
-      url: 'https://stettoposts.com/auth/signup',
+      url: 'https://stetto.live/auth/signup',
       lastModified: new Date(),
       changeFrequency: 'monthly' as const,
       priority: 0.8,
     },
     {
-      url: 'https://stettoposts.com/account',
+      url: 'https://stetto.live/account',
       lastModified: new Date(),
       changeFrequency: 'weekly' as const,
       priority: 0.9,
     },
     {
-      url: 'https://stettoposts.com/watermarks',
+      url: 'https://stetto.live/watermarks',
       lastModified: new Date(),
       changeFrequency: 'weekly' as const,
       priority: 0.9,
     },
     {
-      url: 'https://stettoposts.com/collections',
+      url: 'https://stetto.live/collections',
       lastModified: new Date(),
       changeFrequency: 'weekly' as const,
       priority: 0.9,

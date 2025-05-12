@@ -26,6 +26,9 @@ import { createClient } from '@/utils/supabase/client'
 import { isUserAdmin } from '../auth/actions'
 import Image from 'next/image'
 
+// Add import for WatermarkedImage component
+import WatermarkedImage from '@/components/watermark/WatermarkedImage'
+
 interface Photo {
   id: string
   url: string
@@ -44,6 +47,95 @@ interface PreviewImage {
   id: string
   file: File
   preview: string
+}
+
+// Add a new component for collection thumbnails
+const CollectionThumbnail = ({ collection }: { collection: Collection }) => {
+  const [watermarkConfig, setWatermarkConfig] = useState<any>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    // Only fetch watermark config if the collection has a watermark
+    if (!collection.hasWatermark) {
+      setLoading(false)
+      return
+    }
+
+    const fetchWatermarkConfig = async () => {
+      try {
+        setLoading(true)
+        const response = await fetch(`/api/collections/${collection.id}/watermark`)
+        
+        if (response.ok) {
+          const data = await response.json()
+          if (data && data.watermark) {
+            setWatermarkConfig(data)
+          } else {
+            setError('No watermark configuration found')
+          }
+        } else {
+          setError('Failed to load watermark configuration')
+        }
+      } catch (error) {
+        console.error('Error fetching watermark config:', error)
+        setError('Error loading watermark')
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    if (collection.id && collection.photos.length > 0) {
+      fetchWatermarkConfig()
+    }
+  }, [collection.id, collection.hasWatermark, collection.photos])
+
+  if (loading) {
+    return (
+      <div className="w-full h-full flex items-center justify-center">
+        <Loader2 className="h-6 w-6 animate-spin text-primary" />
+      </div>
+    )
+  }
+
+  // If collection has watermark and we have the config, use WatermarkedImage
+  if (collection.hasWatermark && watermarkConfig && watermarkConfig.watermark && collection.photos.length > 0) {
+    return (
+      <WatermarkedImage
+        photoUrl={collection.photos[0].url}
+        watermarkUrl={watermarkConfig.watermark.url}
+        watermarkConfig={{
+          position: watermarkConfig.position,
+          dimensions: watermarkConfig.dimensions,
+          rotation: watermarkConfig.rotation
+        }}
+        alt={collection.name}
+        className="w-full h-full object-cover"
+      />
+    )
+  }
+
+  // For collections without watermark or if there was an error loading watermark config
+  if (collection.photos.length > 0) {
+    return (
+      <Image
+        src={collection.photos[0].url} 
+        alt={collection.name}
+        className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
+        width={500}
+        height={300}
+        sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
+        priority
+      />
+    )
+  }
+
+  // Fallback for collections without photos
+  return (
+    <div className="w-full h-full flex items-center justify-center">
+      <ImageIcon className="h-12 w-12 text-gray-300" />
+    </div>
+  )
 }
 
 const CollectionsPage = () => {
@@ -409,19 +501,7 @@ const CollectionsPage = () => {
             >
               <Link href={`/collections/${collection.id}`} className="block h-full">
                 <div className="aspect-video bg-gray-100 relative overflow-hidden">
-                  {collection.photos.length > 0 ? (
-                    <Image
-                      src={collection.photos[0].url} 
-                      alt={collection.name}
-                      className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
-                      width={100}
-                      height={100}
-                    />
-                  ) : (
-                    <div className="w-full h-full flex items-center justify-center">
-                      <ImageIcon className="h-12 w-12 text-gray-300" />
-                    </div>
-                  )}
+                  <CollectionThumbnail collection={collection} />
                   {collection.hasWatermark && (
                     <div className="absolute top-2 right-2 bg-primary text-white text-xs px-2 py-1 rounded">
                       Watermarked
