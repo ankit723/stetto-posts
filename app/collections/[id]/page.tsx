@@ -139,6 +139,8 @@ const CollectionPage = () => {
   const [isDownloadingCollection, setIsDownloadingCollection] = useState(false)
   const [isSavingConfig, setIsSavingConfig] = useState(false)
   const [downloadingBatch, setDownloadingBatch] = useState<string | null>(null)
+  const [isSharing, setIsSharing] = useState(false)
+  const [isLoadingWatermarkModal, setIsLoadingWatermarkModal] = useState(false)
 
   useEffect(() => {
     const fetchCollection = async () => {
@@ -276,6 +278,8 @@ const CollectionPage = () => {
   }
 
   const handleShare = () => {
+    setIsSharing(true)
+    
     if (typeof navigator.share !== 'undefined' && collection) {
       navigator.share({
         title: collection.name,
@@ -290,17 +294,24 @@ const CollectionPage = () => {
           toast.error('Failed to share. Try copying the URL manually.')
         }
       })
+      .finally(() => setIsSharing(false))
     } else {
       // Fallback for browsers that don't support share API
       navigator.clipboard.writeText(window.location.href)
         .then(() => toast.success('Link copied to clipboard'))
         .catch(() => toast.error('Failed to copy link'))
+        .finally(() => setIsSharing(false))
     }
   }
 
   const handleOpenWatermarkModal = async () => {
-    await fetchWatermarks()
-    setIsWatermarkModalOpen(true)
+    setIsLoadingWatermarkModal(true)
+    try {
+      await fetchWatermarks()
+      setIsWatermarkModalOpen(true)
+    } finally {
+      setIsLoadingWatermarkModal(false)
+    }
   }
 
   const handleSaveWatermarkConfig = async (config: WatermarkConfig) => {
@@ -626,16 +637,34 @@ const CollectionPage = () => {
               variant="outline" 
               onClick={handleShare}
               className="shrink-0"
+              disabled={isSharing}
             >
-              <Share2 className="mr-2 h-4 w-4" /> Share
+              {isSharing ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Sharing...
+                </>
+              ) : (
+                <>
+                  <Share2 className="mr-2 h-4 w-4" /> Share
+                </>
+              )}
             </Button>
             <Button 
               variant={watermarkConfig ? "default" : "outline"}
               onClick={handleOpenWatermarkModal}
               className="shrink-0"
+              disabled={isLoadingWatermarkModal}
             >
-              <Stamp className="mr-2 h-4 w-4" /> 
-              {watermarkConfig ? "Edit Watermark" : "Add Watermark"}
+              {isLoadingWatermarkModal ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Loading...
+                </>
+              ) : (
+                <>
+                  <Stamp className="mr-2 h-4 w-4" /> 
+                  {watermarkConfig ? "Edit Watermark" : "Add Watermark"}
+                </>
+              )}
             </Button>
             {watermarkConfig && collection.photos.length > 0 && (
               <Button 

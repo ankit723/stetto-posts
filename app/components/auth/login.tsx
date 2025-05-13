@@ -2,21 +2,40 @@
 
 import Link from 'next/link'
 import { useState } from 'react'
+import { useFormStatus } from 'react-dom'
 import { login } from '@/app/auth/actions'
 import { Loader2 } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 
 type AuthResult = 
   | { error: string }
   | { message: string }
   | undefined;
 
+// Submit button component that uses useFormStatus
+function SubmitButton() {
+  const { pending } = useFormStatus()
+  
+  return (
+    <Button
+      type="submit"
+      disabled={pending}
+      className="w-full flex items-center justify-center"
+    >
+      {pending ? (
+        <>
+          <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Signing in...
+        </>
+      ) : 'Sign in'}
+    </Button>
+  )
+}
+
 export default function LoginPage() {
   const [error, setError] = useState<string | null>(null)
-  const [isLoading, setIsLoading] = useState(false)
-
+  
   const handleSubmit = async (formData: FormData) => {
     setError(null)
-    setIsLoading(true)
     
     try {
       const result = await login(formData) as AuthResult
@@ -24,10 +43,8 @@ export default function LoginPage() {
         setError(result.error)
       }
     } catch (e) {
-      console.log('e', e)
+      console.error('Error during login:', e)
       setError('An error occurred during login. Please try again.')
-    } finally {
-      setIsLoading(false)
     }
   }
 
@@ -74,21 +91,7 @@ export default function LoginPage() {
           </div>
 
           <div>
-            <button
-              type="submit"
-              disabled={isLoading}
-              className={`w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-primary-foreground ${
-                isLoading 
-                  ? 'bg-primary/70 cursor-not-allowed' 
-                  : 'bg-primary hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-ring/50'
-              }`}
-            >
-              {isLoading ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Signing in...
-                </>
-              ) : 'Sign in'}
-            </button>
+            <SubmitButton />
           </div>
         </form>
 

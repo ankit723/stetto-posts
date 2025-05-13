@@ -5,29 +5,33 @@ import { createClient } from '@/utils/supabase/server'
 export async function GET(request: Request) {
   const { searchParams, origin } = new URL(request.url)
   const code = searchParams.get('code')
-  console.log('code', code)
-  console.log('searchParams', searchParams)
-  console.log('origin', origin)
-  // if "next" is in param, use it as the redirect URL
   const next = searchParams.get('next') ?? '/'
 
+  console.log('Code from query:', code)
+  console.log('SearchParams:', searchParams.toString())
+  console.log('Origin:', origin)
+
   if (code) {
-    const supabase = await createClient()
+    const supabase = createClient()
     const { error } = await supabase.auth.exchangeCodeForSession(code)
+    console.log('Exchange result error:', error)
+
     if (!error) {
-      const forwardedHost = request.headers.get('x-forwarded-host') // original origin before load balancer
+      const forwardedHost = request.headers.get('x-forwarded-host')
       const isLocalEnv = process.env.NODE_ENV === 'development'
-      if (isLocalEnv) {
-        // we can be sure that there is no load balancer in between, so no need to watch for X-Forwarded-Host
-        return NextResponse.redirect(`${origin}${next}`)
-      } else if (forwardedHost) {
-        return NextResponse.redirect(`https://${forwardedHost}${next}`)
-      } else {
-        return NextResponse.redirect(`${origin}${next}`)
-      }
+
+      const finalRedirectUrl = isLocalEnv
+        ? `${origin}${next}`
+        : forwardedHost
+        ? `https://${forwardedHost}${next}`
+        : `${origin}${next}`
+
+      console.log('Redirecting to:', finalRedirectUrl)
+      return NextResponse.redirect(finalRedirectUrl)
     }
   }
 
-  // return the user to an error page with instructions
+  // If code was not present or exchange failed
+  console.error('Redirecting to error page')
   return NextResponse.redirect(`${origin}/auth/error`)
 }

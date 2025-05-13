@@ -2,23 +2,42 @@
 
 import Link from 'next/link'
 import { useState } from 'react'
+import { useFormStatus } from 'react-dom'
 import { signup } from '@/app/auth/actions'
 import { Loader2 } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 
 type AuthResult = 
   | { error: string }
   | { message: string }
   | undefined;
 
+// Submit button component that uses useFormStatus
+function SubmitButton() {
+  const { pending } = useFormStatus()
+  
+  return (
+    <Button
+      type="submit"
+      disabled={pending}
+      className="w-full flex items-center justify-center"
+    >
+      {pending ? (
+        <>
+          <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Creating account...
+        </>
+      ) : 'Create account'}
+    </Button>
+  )
+}
+
 export default function SignupPage() {
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
-  const [isLoading, setIsLoading] = useState(false)
-
+  
   const handleSubmit = async (formData: FormData) => {
     setError(null)
     setSuccess(null)
-    setIsLoading(true)
     
     try {
       const result = await signup(formData) as AuthResult
@@ -29,9 +48,8 @@ export default function SignupPage() {
         setSuccess(result.message)
       }
     } catch (e) {
+      console.error('Error during signup:', e)
       setError('An error occurred during signup. Please try again.')
-    } finally {
-      setIsLoading(false)
     }
   }
 
@@ -112,30 +130,15 @@ export default function SignupPage() {
             </div>
 
             <div>
-              <button
-                type="submit"
-                disabled={isLoading}
-                className={`w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-primary-foreground ${
-                  isLoading 
-                    ? 'bg-primary/70 cursor-not-allowed' 
-                    : 'bg-primary hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-ring/50'
-                }`}
-              >
-                {isLoading ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Creating account...
-                  </>
-                ) : 'Create account'}
-              </button>
+              <SubmitButton />
             </div>
           </form>
         ) : (
           <div className="text-center">
-            <Link 
-              href="/auth/login"
-              className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-primary-foreground bg-primary hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-ring/50"
-            >
-              Go to Login
+            <Link href="/auth/login">
+              <Button className="inline-flex items-center">
+                Go to Login
+              </Button>
             </Link>
           </div>
         )}
