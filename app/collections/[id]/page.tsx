@@ -141,6 +141,9 @@ const CollectionPage = () => {
   const [downloadingBatch, setDownloadingBatch] = useState<string | null>(null)
   const [isSharing, setIsSharing] = useState(false)
   const [isLoadingWatermarkModal, setIsLoadingWatermarkModal] = useState(false)
+  const [selectedBatch, setSelectedBatch] = useState(1)
+  const [totalBatches, setTotalBatches] = useState(1)
+  const BATCH_SIZE = 40 // This should match MAX_PHOTOS_PER_BATCH in the API
 
   useEffect(() => {
     const fetchCollection = async () => {
@@ -206,6 +209,15 @@ const CollectionPage = () => {
       setIsLoadingWatermarks(false)
     }
   }
+
+  useEffect(() => {
+    // Calculate total batches whenever collection changes
+    if (collection?.photos?.length) {
+      const batches = Math.ceil(collection.photos.length / BATCH_SIZE)
+      console.log(`Calculating batches: ${collection.photos.length} photos / ${BATCH_SIZE} batch size = ${batches} batches`)
+      setTotalBatches(batches)
+    }
+  }, [collection, BATCH_SIZE])
 
   const handlePhotoClick = (index: number) => {
     setActivePhotoIndex(index)
@@ -343,7 +355,7 @@ const CollectionPage = () => {
     }
   }
 
-  const handleDownloadCollection = async () => {
+  const handleDownloadCollection = async (batchNumber = selectedBatch) => {
     if (!watermarkConfig) {
       toast.error('Please configure a watermark first')
       return
@@ -351,13 +363,19 @@ const CollectionPage = () => {
     
     try {
       setIsDownloadingCollection(true)
-      toast.info(`Starting download of ${collection?.photos.length} photos. This may take a while for large collections...`)
+      setDownloadingBatch(batchNumber.toString())
+      
+      const totalPhotos = collection?.photos?.length || 0
+      const batchStart = (batchNumber - 1) * BATCH_SIZE + 1
+      const batchEnd = Math.min(batchNumber * BATCH_SIZE, totalPhotos)
+      
+      toast.info(`Starting download of photos ${batchStart}-${batchEnd} (batch ${batchNumber}/${totalBatches}). This may take a while...`)
       
       // Use fetch with blob response type for downloading
       const controller = new AbortController()
       const timeoutId = setTimeout(() => controller.abort(), 5 * 60 * 1000) // 5 minute timeout
       
-      const response = await fetch(`/api/collections/${id}/download`, {
+      const response = await fetch(`/api/collections/${id}/download?batch=${batchNumber}`, {
         signal: controller.signal,
         cache: 'no-store' // Ensure we don't get a cached response
       })
@@ -451,15 +469,17 @@ const CollectionPage = () => {
       }
       
       toast.success(`Collection downloaded successfully (${Math.round(blob.size / 1024)} KB)`)
-    } catch (error) {
+    } catch (error: unknown) {
       console.error('Error downloading collection:', error)
-      if (error.name === 'AbortError') {
+      if (error instanceof Error && error.name === 'AbortError') {
         toast.error('Download timed out. The collection may be too large. Please try again later.')
       } else {
-        toast.error(`Failed to download collection: ${error.message || 'Unknown error'}. Please try again later.`)
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        toast.error(`Failed to download collection: ${errorMessage}. Please try again later.`)
       }
     } finally {
       setIsDownloadingCollection(false)
+      setDownloadingBatch(null)
     }
   }
 
@@ -593,6 +613,40 @@ const CollectionPage = () => {
     )
   }
 
+  // Render batch selection dropdown items
+  const renderBatchItems = () => {
+    const items = []
+    
+    for (let i = 1; i <= totalBatches; i++) {
+      const start = (i - 1) * BATCH_SIZE + 1
+      const end = Math.min(i * BATCH_SIZE, collection?.photos?.length || 0)
+      
+      items.push(
+        <DropdownMenuItem 
+          key={i} 
+          onClick={() => {
+            setSelectedBatch(i)
+            handleDownloadCollection(i)
+          }}
+          disabled={isDownloadingCollection}
+        >
+          {downloadingBatch === i.toString() ? (
+            <>
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" /> 
+            </>
+          ) : (
+            <>
+              <Download className="mr-2 h-4 w-4" /> 
+            </>
+          )}
+          Batch {i}: Photos {start}-{end}
+        </DropdownMenuItem>
+      )
+    }
+    
+    return items
+  }
+
   if (loading) {
     return (
       <div className="container mx-auto p-6 flex flex-col items-center justify-center min-h-[60vh]">
@@ -667,21 +721,45 @@ const CollectionPage = () => {
               )}
             </Button>
             {watermarkConfig && collection.photos.length > 0 && (
-              <Button 
-                onClick={handleDownloadCollection}
-                disabled={isDownloadingCollection}
-                className="shrink-0"
-              >
-                {isDownloadingCollection ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Downloading...
-                  </>
-                ) : (
-                  <>
-                    <Download className="mr-2 h-4 w-4" /> Download All
-                  </>
-                )}
-              </Button>
+              totalBatches > 1 ? (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button 
+                      className="shrink-0"
+                      disabled={isDownloadingCollection}
+                    >
+                      {isDownloadingCollection ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Downloading...
+                        </>
+                      ) : (
+                        <>
+                          <Download className="mr-2 h-4 w-4" /> Download <ChevronDown className="ml-1 h-4 w-4" />
+                        </>
+                      )}
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    {renderBatchItems()}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              ) : (
+                <Button 
+                  onClick={() => handleDownloadCollection(1)}
+                  disabled={isDownloadingCollection}
+                  className="shrink-0"
+                >
+                  {isDownloadingCollection ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Downloading...
+                    </>
+                  ) : (
+                    <>
+                      <Download className="mr-2 h-4 w-4" /> Download All
+                    </>
+                  )}
+                </Button>
+              )
             )}
           </div>
         </div>

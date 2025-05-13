@@ -7,7 +7,7 @@ import { db } from '@/utils/db'
 import { User } from '@prisma/client'
 
 // Define the base URL for redirects
-const BASE_URL = process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'
+const BASE_URL = process.env.NEXT_PUBLIC_BASE_URL
 
 // Define a type for the auth action results
 type AuthResult = 
