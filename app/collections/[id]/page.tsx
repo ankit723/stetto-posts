@@ -243,36 +243,83 @@ const CollectionPage = () => {
   const handleDownload = async (photo: Photo) => {
     try {
       setIsDownloading(photo.id)
+      toast.info('Preparing download...')
       
       let imageUrl = photo.url
       
       // If watermark is configured, download the watermarked version
       if (watermarkConfig && watermarkConfig.watermark) {
         // Use the API to get a watermarked version
-        const response = await fetch(`/api/collections/${id}/photos/${photo.id}/watermarked`)
+        const controller = new AbortController()
+        const timeoutId = setTimeout(() => controller.abort(), 30000) // 30 second timeout
+        
+        try {
+          const response = await fetch(`/api/collections/${id}/photos/${photo.id}/watermarked`, {
+            signal: controller.signal
+          })
+          
+          clearTimeout(timeoutId)
+          
+          if (!response.ok) {
+            // Try to get more detailed error information
+            if (response.headers.get('Content-Type')?.includes('application/json')) {
+              const errorData = await response.json()
+              throw new Error(errorData.error || `Failed to generate watermarked image (${response.status})`)
+            } else {
+              throw new Error(`Failed to generate watermarked image (${response.status})`)
+            }
+          }
+          
+          const blob = await response.blob()
+          imageUrl = URL.createObjectURL(blob)
+        } catch (error) {
+          if (error instanceof Error && error.name === 'AbortError') {
+            throw new Error('Download timed out. Please try again.')
+          }
+          console.error('Watermarking error:', error)
+          toast.error(`Watermarking failed: ${error instanceof Error ? error.message : 'Unknown error'}`)
+          
+          // Fall back to downloading the original image
+          toast.info('Downloading original image instead...')
+          const response = await fetch(photo.url)
+          
+          if (!response.ok) {
+            throw new Error('Failed to download original image')
+          }
+          
+          const blob = await response.blob()
+          imageUrl = URL.createObjectURL(blob)
+        }
+      } else {
+        // Fetch the original image
+        const response = await fetch(photo.url)
         
         if (!response.ok) {
-          throw new Error('Failed to generate watermarked image')
+          throw new Error('Failed to download original image')
         }
         
         const blob = await response.blob()
         imageUrl = URL.createObjectURL(blob)
-      } else {
-        // Fetch the original image
-        const response = await fetch(photo.url)
-        const blob = await response.blob()
-        imageUrl = URL.createObjectURL(blob)
+      }
+      
+      // Extract filename from URL
+      const urlParts = photo.url.split('/')
+      let filename = urlParts[urlParts.length - 1]
+      
+      // Remove query parameters if any
+      if (filename.includes('?')) {
+        filename = filename.split('?')[0]
+      }
+      
+      // Add watermarked prefix if using watermark
+      if (watermarkConfig && watermarkConfig.watermark) {
+        filename = `watermarked_${filename}`
       }
       
       // Create a download link
       const a = document.createElement('a')
       a.href = imageUrl
-      
-      // Extract filename from URL
-      const urlParts = photo.url.split('/')
-      const filename = urlParts[urlParts.length - 1]
-      
-      a.download = watermarkConfig ? `watermarked_${filename}` : filename
+      a.download = filename
       document.body.appendChild(a)
       a.click()
       
@@ -283,7 +330,7 @@ const CollectionPage = () => {
       toast.success('Photo downloaded successfully')
     } catch (error) {
       console.error('Error downloading photo:', error)
-      toast.error('Failed to download photo. Please try again.')
+      toast.error(`Failed to download photo: ${error instanceof Error ? error.message : 'Unknown error'}`)
     } finally {
       setIsDownloading(null)
     }
