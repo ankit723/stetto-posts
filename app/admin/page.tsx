@@ -18,6 +18,7 @@ import {
 import { toast } from 'sonner'
 import Link from 'next/link'
 import Image from 'next/image'
+import { compressImageToFile } from '@/utils/imageCompression'
 
 
 interface Photo {
@@ -124,34 +125,65 @@ const AdminPage = () => {
     }))
   }
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files) return
     
     const files = Array.from(e.target.files)
-    setSelectedFiles((prevFiles) => [...prevFiles, ...files])
     
-    // Create preview URLs with loading state
-    const newPreviews = files.map((file) => {
-      const id = Math.random().toString(36).substring(2)
-      // Set loading state for this image
-      setIsImageLoading(prev => ({...prev, [id]: true}))
-      
-      const preview = URL.createObjectURL(file)
-      
-      // Create an image object to detect when it's loaded
-      const imgElement = document.createElement('img')
-      imgElement.onload = () => {
-        setIsImageLoading(prev => ({...prev, [id]: false}))
-      }
-      imgElement.src = preview
-      
-      return {
-        id,
-        file,
-        preview,
-      }
+    // Show loading state while compressing images
+    setIsImageLoading(prev => {
+      const newState = {...prev}
+      files.forEach(file => {
+        const id = Math.random().toString(36).substring(2)
+        newState[id] = true
+      })
+      return newState
     })
     
+    // Process files in parallel with compression
+    const processedFiles: File[] = []
+    const newPreviews: PreviewImage[] = []
+    
+    await Promise.all(files.map(async (file) => {
+      try {
+        // Generate a unique ID for this image
+        const id = Math.random().toString(36).substring(2)
+        
+        // Compress the image
+        const compressedFile = await compressImageToFile(file, {
+          quality: 75,
+          maxWidth: 1920,
+          maxHeight: 1080,
+          format: 'jpeg' // Use JPEG for better compression
+        })
+        
+        // Add to processed files
+        processedFiles.push(compressedFile)
+        
+        // Create preview URL
+        const preview = URL.createObjectURL(compressedFile)
+        
+        // Create an image object to detect when it's loaded
+        const imgElement = document.createElement('img')
+        imgElement.onload = () => {
+          setIsImageLoading(prev => ({...prev, [id]: false}))
+        }
+        imgElement.src = preview
+        
+        // Add to preview images
+        newPreviews.push({
+          id,
+          file: compressedFile,
+          preview,
+        })
+      } catch (error) {
+        console.error('Error compressing image:', error)
+        toast.error('Failed to process image. Please try again.')
+      }
+    }))
+    
+    // Update state with processed files
+    setSelectedFiles((prevFiles) => [...prevFiles, ...processedFiles])
     setPreviewImages((prevPreviews) => [...prevPreviews, ...newPreviews])
   }
 

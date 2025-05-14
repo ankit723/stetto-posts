@@ -15,6 +15,7 @@ import {
   DialogFooter
 } from '@/components/ui/dialog'
 import Image from 'next/image'
+import { compressImageToFile } from '@/utils/imageCompression'
 
 interface Watermark {
   id: string
@@ -55,7 +56,7 @@ const WatermarksPage = () => {
     }
   }
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       const file = e.target.files[0]
       
@@ -71,7 +72,21 @@ const WatermarksPage = () => {
         return
       }
       
-      setSelectedFile(file)
+      try {
+        // Compress the image before setting it
+        const compressedFile = await compressImageToFile(file, {
+          quality: 80,
+          maxWidth: 1024, // Watermarks typically don't need to be huge
+          maxHeight: 1024,
+          // Preserve transparency for PNG watermarks
+          format: file.type.includes('png') ? 'png' : 'jpeg'
+        })
+        
+        setSelectedFile(compressedFile)
+      } catch (error) {
+        console.error('Error compressing image:', error)
+        toast.error('Failed to process image. Please try again.')
+      }
     }
   }
 

@@ -25,6 +25,8 @@ import { Textarea } from '@/components/ui/textarea'
 import { createClient } from '@/utils/supabase/client'
 import { isUserAdmin } from '../auth/actions'
 import Image from 'next/image'
+import { compressImageToFile } from '@/utils/imageCompression'
+import { useRouter } from 'next/navigation'
 
 // Add import for WatermarkedImage component
 import WatermarkedImage from '@/components/watermark/WatermarkedImage'
@@ -163,8 +165,13 @@ const CollectionsPage = () => {
   const [isImageLoading, setIsImageLoading] = useState<{[key: string]: boolean}>({})
   const [deletingProgress, setDeletingProgress] = useState(0)
   const [isDeletingPhotos, setIsDeletingPhotos] = useState(false)
-
+  const [currentCollection, setCurrentCollection] = useState<Collection | null>(null)
+  const [collectionToDelete, setCollectionToDelete] = useState<string | null>(null)
+  
+  const MAX_IMAGES = 50 // Maximum number of images allowed per collection
+  
   const supabase = createClient()
+  const router = useRouter()
 
   useEffect(() => {
     const checkAdminStatus = async () => {
@@ -219,55 +226,154 @@ const CollectionsPage = () => {
     }
   }
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files) return
     
-    const MAX_IMAGES = 50
     const files = Array.from(e.target.files)
     
-    // If total files would exceed the limit, only take what we can
-    // For edit mode, we only limit the new uploads to 50, regardless of existing images
-    const currentCount = selectedFiles.length
-    const remainingSlots = Math.max(0, MAX_IMAGES - currentCount)
-    
-    if (remainingSlots <= 0) {
-      toast.warning(`Maximum of ${MAX_IMAGES} new images allowed. Please remove some selected images first.`)
-      return
-    }
-    
-    // Take only as many files as we have slots for
-    const filesToAdd = files.slice(0, remainingSlots)
+    // Limit the number of files to add
+    const filesToAdd = files.slice(0, MAX_IMAGES - selectedFiles.length)
     
     // Show warning if some files were dropped
     if (files.length > filesToAdd.length) {
       toast.warning(`Only added ${filesToAdd.length} images. Maximum of ${MAX_IMAGES} new images allowed.`)
     }
     
-    setSelectedFiles((prevFiles) => [...prevFiles, ...filesToAdd])
-    
-    // Create preview URLs with loading state
-    const newPreviews = filesToAdd.map((file) => {
-      const id = Math.random().toString(36).substring(2)
-      // Set loading state for this image
-      setIsImageLoading(prev => ({...prev, [id]: true}))
-      
-      const preview = URL.createObjectURL(file)
-      
-      // Create an image object to detect when it's loaded
-      const imgElement = document.createElement('img')
-      imgElement.onload = () => {
-        setIsImageLoading(prev => ({...prev, [id]: false}))
-      }
-      imgElement.src = preview
-      
-      return {
-        id,
-        file,
-        preview,
-      }
+    // Show loading state while compressing images
+    setIsImageLoading(prev => {
+      const newState = {...prev}
+      filesToAdd.forEach(file => {
+        const id = Math.random().toString(36).substring(2)
+        newState[id] = true
+      })
+      return newState
     })
     
+    // Process files in parallel with compression
+    const processedFiles: File[] = []
+    const newPreviews: PreviewImage[] = []
+    
+    await Promise.all(filesToAdd.map(async (file) => {
+      try {
+        // Generate a unique ID for this image
+        const id = Math.random().toString(36).substring(2)
+        
+        // Compress the image
+        const compressedFile = await compressImageToFile(file, {
+          quality: 75,
+          maxWidth: 1920,
+          maxHeight: 1080,
+          format: 'jpeg' // Use JPEG for better compression
+        })
+        
+        // Add to processed files
+        processedFiles.push(compressedFile)
+        
+        // Create preview URL
+        const preview = URL.createObjectURL(compressedFile)
+        
+        // Create an image object to detect when it's loaded
+        const imgElement = document.createElement('img')
+        imgElement.onload = () => {
+          setIsImageLoading(prev => ({...prev, [id]: false}))
+        }
+        imgElement.src = preview
+        
+        // Add to preview images
+        newPreviews.push({
+          id,
+          file: compressedFile,
+          preview,
+        })
+      } catch (error) {
+        console.error('Error compressing image:', error)
+        toast.error('Failed to process image. Please try again.')
+      }
+    }))
+    
+    // Update state with processed files
+    setSelectedFiles((prevFiles) => [...prevFiles, ...processedFiles])
     setPreviewImages((prevPreviews) => [...prevPreviews, ...newPreviews])
+  }
+
+  const handleDrop = async (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    
+    if (e.dataTransfer.files) {
+      const files = Array.from(e.dataTransfer.files)
+      
+      // Filter for only image files
+      const imageFiles = files.filter(file => file.type.startsWith('image/'))
+      
+      if (imageFiles.length === 0) {
+        toast.error('Please drop image files only')
+        return
+      }
+      
+      // Limit the number of files to add
+      const filesToAdd = imageFiles.slice(0, MAX_IMAGES - selectedFiles.length)
+      
+      // Show warning if some files were dropped
+      if (imageFiles.length > filesToAdd.length) {
+        toast.warning(`Only added ${filesToAdd.length} images. Maximum of ${MAX_IMAGES} new images allowed.`)
+      }
+      
+      // Show loading state while compressing images
+      setIsImageLoading(prev => {
+        const newState = {...prev}
+        filesToAdd.forEach(file => {
+          const id = Math.random().toString(36).substring(2)
+          newState[id] = true
+        })
+        return newState
+      })
+      
+      // Process files in parallel with compression
+      const processedFiles: File[] = []
+      const newPreviews: PreviewImage[] = []
+      
+      await Promise.all(filesToAdd.map(async (file) => {
+        try {
+          // Generate a unique ID for this image
+          const id = Math.random().toString(36).substring(2)
+          
+          // Compress the image
+          const compressedFile = await compressImageToFile(file, {
+            quality: 75,
+            maxWidth: 1920,
+            maxHeight: 1080,
+            format: 'jpeg' // Use JPEG for better compression
+          })
+          
+          // Add to processed files
+          processedFiles.push(compressedFile)
+          
+          // Create preview URL
+          const preview = URL.createObjectURL(compressedFile)
+          
+          // Create an image object to detect when it's loaded
+          const imgElement = document.createElement('img')
+          imgElement.onload = () => {
+            setIsImageLoading(prev => ({...prev, [id]: false}))
+          }
+          imgElement.src = preview
+          
+          // Add to preview images
+          newPreviews.push({
+            id,
+            file: compressedFile,
+            preview,
+          })
+        } catch (error) {
+          console.error('Error compressing image:', error)
+          toast.error('Failed to process image. Please try again.')
+        }
+      }))
+      
+      // Update state with processed files
+      setSelectedFiles((prevFiles) => [...prevFiles, ...processedFiles])
+      setPreviewImages((prevPreviews) => [...prevPreviews, ...newPreviews])
+    }
   }
 
   const removeImage = (id: string) => {
