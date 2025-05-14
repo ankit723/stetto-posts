@@ -161,6 +161,8 @@ const CollectionsPage = () => {
   const [photosToDelete, setPhotosToDelete] = useState<string[]>([])
   const [uploadProgress, setUploadProgress] = useState(0)
   const [isImageLoading, setIsImageLoading] = useState<{[key: string]: boolean}>({})
+  const [deletingProgress, setDeletingProgress] = useState(0)
+  const [isDeletingPhotos, setIsDeletingPhotos] = useState(false)
 
   const supabase = createClient()
 
@@ -220,11 +222,31 @@ const CollectionsPage = () => {
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files) return
     
+    const MAX_IMAGES = 50
     const files = Array.from(e.target.files)
-    setSelectedFiles((prevFiles) => [...prevFiles, ...files])
+    
+    // If total files would exceed the limit, only take what we can
+    // For edit mode, we only limit the new uploads to 50, regardless of existing images
+    const currentCount = selectedFiles.length
+    const remainingSlots = Math.max(0, MAX_IMAGES - currentCount)
+    
+    if (remainingSlots <= 0) {
+      toast.warning(`Maximum of ${MAX_IMAGES} new images allowed. Please remove some selected images first.`)
+      return
+    }
+    
+    // Take only as many files as we have slots for
+    const filesToAdd = files.slice(0, remainingSlots)
+    
+    // Show warning if some files were dropped
+    if (files.length > filesToAdd.length) {
+      toast.warning(`Only added ${filesToAdd.length} images. Maximum of ${MAX_IMAGES} new images allowed.`)
+    }
+    
+    setSelectedFiles((prevFiles) => [...prevFiles, ...filesToAdd])
     
     // Create preview URLs with loading state
-    const newPreviews = files.map((file) => {
+    const newPreviews = filesToAdd.map((file) => {
       const id = Math.random().toString(36).substring(2)
       // Set loading state for this image
       setIsImageLoading(prev => ({...prev, [id]: true}))
@@ -276,61 +298,117 @@ const CollectionsPage = () => {
       setIsCreating(true)
       setUploadProgress(0)
       
-      // First upload images to Supabase storage
-      const imageUrls: string[] = []
+      // Prepare for batch uploads
+      const BATCH_SIZE = 40
+      const MAX_RETRIES = 3
+      const RETRY_DELAY = 1000 // 1 second delay between retries
       
-      // Upload each image
-      for (let i = 0; i < selectedFiles.length; i++) {
-        const file = selectedFiles[i]
-        const fileExt = file.name.split('.').pop()
-        const fileName = `${Math.random().toString(36).substring(2)}.${fileExt}`
-        const filePath = `collections/${fileName}`
-        
-        const { error: uploadError } = await supabase.storage
-          .from('photos')
-          .upload(filePath, file)
+      // Function to upload a single file with retry mechanism
+      const uploadFileWithRetry = async (file: File, retryCount = 0): Promise<string> => {
+        try {
+          const fileExt = file.name.split('.').pop()
+          const fileName = `${Math.random().toString(36).substring(2)}.${fileExt}`
+          const filePath = `collections/${fileName}`
           
-        if (uploadError) {
-          throw uploadError
+          const { error: uploadError } = await supabase.storage
+            .from('photos')
+            .upload(filePath, file)
+            
+          if (uploadError) {
+            throw uploadError
+          }
+          
+          // Get public URL
+          const { data: { publicUrl } } = supabase.storage
+            .from('photos')
+            .getPublicUrl(filePath)
+            
+          return publicUrl
+        } catch (error) {
+          if (retryCount < MAX_RETRIES) {
+            // Wait before retrying
+            await new Promise(resolve => setTimeout(resolve, RETRY_DELAY))
+            return uploadFileWithRetry(file, retryCount + 1)
+          }
+          throw error
         }
+      }
+      
+      // Process files in batches
+      const allImageUrls: string[] = []
+      const totalFiles = selectedFiles.length
+      let processedFiles = 0
+      
+      // Upload all images in batches
+      for (let i = 0; i < totalFiles; i += BATCH_SIZE) {
+        const batch = selectedFiles.slice(i, i + BATCH_SIZE)
         
-        // Get public URL
-        const { data: { publicUrl } } = supabase.storage
-          .from('photos')
-          .getPublicUrl(filePath)
-          
-        imageUrls.push(publicUrl)
+        // Upload batch in parallel
+        const batchResults = await Promise.allSettled(
+          batch.map(file => uploadFileWithRetry(file))
+        )
+        
+        // Process results
+        const batchUrls = batchResults.map((result, index) => {
+          if (result.status === 'fulfilled') {
+            return result.value
+          } else {
+            console.error(`Failed to upload file ${i + index}:`, result.reason)
+            // Return null for failed uploads
+            return null
+          }
+        }).filter(Boolean) as string[]
+        
+        allImageUrls.push(...batchUrls)
         
         // Update progress
-        setUploadProgress(Math.round(((i + 1) / selectedFiles.length) * 100))
+        processedFiles += batch.length
+        setUploadProgress(Math.round((processedFiles / totalFiles) * 100))
       }
       
-      const response = await fetch('/api/collections', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          name: newCollectionName,
-          description: newCollectionDescription,
-          images: imageUrls,
-        }),
-      })
-      
-      if (!response.ok) {
-        const errorData = await response.json()
-        throw new Error(errorData.error || 'Failed to create collection')
+      // Create the collection with all successfully uploaded images
+      if (allImageUrls.length > 0) {
+        const createResponse = await fetch('/api/collections', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            name: newCollectionName,
+            description: newCollectionDescription,
+            images: allImageUrls,
+          }),
+        })
+        
+        if (!createResponse.ok) {
+          const errorData = await createResponse.json()
+          throw new Error(errorData.error || 'Failed to create collection')
+        }
+        
+        const newCollection = await createResponse.json()
+        
+        // Calculate success rate
+        const successRate = (allImageUrls.length / totalFiles) * 100
+        
+        // Update UI state
+        setCollections(prev => [...prev, { ...newCollection, hasWatermark: false }])
+        setIsAddDialogOpen(false)
+        setNewCollectionName('')
+        setNewCollectionDescription('')
+        setSelectedFiles([])
+        setPreviewImages([])
+        
+        // Show appropriate success message based on upload results
+        if (successRate === 100) {
+          toast.success('Collection created successfully with all images')
+        } else if (successRate > 0) {
+          toast.success(`Collection created with ${allImageUrls.length} of ${totalFiles} images`)
+        } else {
+          toast.warning('Collection created but no images were uploaded successfully')
+        }
+      } else {
+        throw new Error('No images were uploaded successfully')
       }
-      
-      const newCollection = await response.json()
-      
-      setCollections([...collections, { ...newCollection, hasWatermark: false }])
-      setIsAddDialogOpen(false)
-      setNewCollectionName('')
-      setNewCollectionDescription('')
-      setSelectedFiles([])
-      setPreviewImages([])
-      toast.success('Collection created successfully')
     } catch (error) {
       console.error('Error creating collection:', error)
       toast.error('Failed to create collection. Please try again.')
@@ -364,43 +442,84 @@ const CollectionsPage = () => {
       setIsEditing(true)
       setUploadProgress(0)
       
-      // Upload new images if any
-      const imageUrls: string[] = []
+      // Prepare for batch uploads
+      const BATCH_SIZE = 40
+      const MAX_RETRIES = 3
+      const RETRY_DELAY = 1000 // 1 second delay between retries
       
-      // Upload each new image
-      for (let i = 0; i < selectedFiles.length; i++) {
-        const file = selectedFiles[i]
-        const fileExt = file.name.split('.').pop()
-        const fileName = `${Math.random().toString(36).substring(2)}.${fileExt}`
-        const filePath = `collections/${fileName}`
-        
-        const { error: uploadError } = await supabase.storage
-          .from('photos')
-          .upload(filePath, file)
+      // Function to upload a single file with retry mechanism
+      const uploadFileWithRetry = async (file: File, retryCount = 0): Promise<string> => {
+        try {
+          const fileExt = file.name.split('.').pop()
+          const fileName = `${Math.random().toString(36).substring(2)}.${fileExt}`
+          const filePath = `collections/${fileName}`
           
-        if (uploadError) {
-          throw uploadError
+          const { error: uploadError } = await supabase.storage
+            .from('photos')
+            .upload(filePath, file)
+            
+          if (uploadError) {
+            throw uploadError
+          }
+          
+          // Get public URL
+          const { data: { publicUrl } } = supabase.storage
+            .from('photos')
+            .getPublicUrl(filePath)
+            
+          return publicUrl
+        } catch (error) {
+          if (retryCount < MAX_RETRIES) {
+            // Wait before retrying
+            await new Promise(resolve => setTimeout(resolve, RETRY_DELAY))
+            return uploadFileWithRetry(file, retryCount + 1)
+          }
+          throw error
         }
-        
-        // Get public URL
-        const { data: { publicUrl } } = supabase.storage
-          .from('photos')
-          .getPublicUrl(filePath)
-          
-        imageUrls.push(publicUrl)
-        
-        // Update progress
-        setUploadProgress(Math.round(((i + 1) / selectedFiles.length) * 100))
       }
       
+      // Process files in batches
+      const allImageUrls: string[] = []
+      const totalFiles = selectedFiles.length
+      let processedFiles = 0
+      
+      // Upload all images in batches
+      for (let i = 0; i < totalFiles; i += BATCH_SIZE) {
+        const batch = selectedFiles.slice(i, i + BATCH_SIZE)
+        
+        // Upload batch in parallel
+        const batchResults = await Promise.allSettled(
+          batch.map(file => uploadFileWithRetry(file))
+        )
+        
+        // Process results
+        const batchUrls = batchResults.map((result, index) => {
+          if (result.status === 'fulfilled') {
+            return result.value
+          } else {
+            console.error(`Failed to upload file ${i + index}:`, result.reason)
+            // Return null for failed uploads
+            return null
+          }
+        }).filter(Boolean) as string[]
+        
+        allImageUrls.push(...batchUrls)
+        
+        // Update progress
+        processedFiles += batch.length
+        setUploadProgress(Math.round((processedFiles / totalFiles) * 100))
+      }
+      
+      // Prepare the payload for the API
       const payload = {
         name: editCollectionName,
         description: editCollectionDescription,
-        newImages: imageUrls,
+        newImages: allImageUrls,
         existingPhotos: existingPhotos.map(photo => photo.id),
         photosToDelete
       }
       
+      // Update the collection with all the data at once
       const response = await fetch(`/api/collections/${editCollectionId}`, {
         method: 'PUT',
         headers: {
@@ -417,6 +536,9 @@ const CollectionsPage = () => {
       // Fetch the updated collection
       const updatedCollection = await response.json()
       
+      // Calculate success rate for uploads
+      const successRate = totalFiles > 0 ? (allImageUrls.length / totalFiles) * 100 : 100
+      
       setCollections(collections.map(c => 
         c.id === editCollectionId ? { ...updatedCollection, hasWatermark: c.hasWatermark } : c
       ))
@@ -427,7 +549,15 @@ const CollectionsPage = () => {
       setPreviewImages([])
       setExistingPhotos([])
       setPhotosToDelete([])
-      toast.success('Collection updated successfully')
+      
+      // Show appropriate success message based on upload results
+      if (successRate === 100 && totalFiles > 0) {
+        toast.success('Collection updated successfully with all new images')
+      } else if (successRate > 0 && totalFiles > 0) {
+        toast.success(`Collection updated with ${allImageUrls.length} of ${totalFiles} new images`)
+      } else {
+        toast.success('Collection updated successfully')
+      }
     } catch (error) {
       console.error('Error updating collection:', error)
       toast.error('Failed to update collection. Please try again.')
@@ -440,9 +570,40 @@ const CollectionsPage = () => {
     try {
       setIsDeleting(true)
       
+      // Find the collection to get photo count for progress indication
+      const collectionToDelete = collections.find(c => c.id === deleteCollectionId)
+      const photoCount = collectionToDelete?.photos?.length || 0
+      
+      if (photoCount > 0) {
+        setIsDeletingPhotos(true)
+        setDeletingProgress(0)
+        
+        // Show progress indication based on estimated time
+        // This is just a visual indicator as we can't track the actual server-side deletion progress
+        const estimatedTimePerPhoto = 50 // milliseconds
+        const totalEstimatedTime = photoCount * estimatedTimePerPhoto
+        
+        // Update progress every 100ms
+        const interval = setInterval(() => {
+          setDeletingProgress(prev => {
+            const newProgress = prev + (100 / (totalEstimatedTime / 100))
+            return newProgress > 95 ? 95 : newProgress // Cap at 95% until confirmed deleted
+          })
+        }, 100)
+        
+        // Clean up interval when component unmounts
+        setTimeout(() => {
+          clearInterval(interval)
+        }, totalEstimatedTime)
+      }
+      
       const response = await fetch(`/api/collections/${deleteCollectionId}`, {
         method: 'DELETE',
       })
+      
+      // Clear any remaining intervals
+      setDeletingProgress(100)
+      setIsDeletingPhotos(false)
       
       if (!response.ok) {
         const errorData = await response.json()
@@ -457,6 +618,7 @@ const CollectionsPage = () => {
       toast.error('Failed to delete collection. Please try again.')
     } finally {
       setIsDeleting(false)
+      setIsDeletingPhotos(false)
     }
   }
 
@@ -602,6 +764,23 @@ const CollectionsPage = () => {
                 disabled={isCreating}
               />
               
+              {/* Image count indicator */}
+              <div className="flex justify-between text-sm text-gray-500">
+                <span><span className="font-medium">{selectedFiles.length}</span> of 50 images selected</span>
+                {selectedFiles.length > 0 && (
+                  <button 
+                    type="button" 
+                    onClick={() => {
+                      setSelectedFiles([]);
+                      setPreviewImages([]);
+                    }}
+                    className="text-red-500 hover:text-red-700"
+                  >
+                    Clear all
+                  </button>
+                )}
+              </div>
+              
               {/* Image previews */}
               {previewImages.length > 0 && (
                 <div className="mt-4">
@@ -724,6 +903,26 @@ const CollectionsPage = () => {
                   disabled={isEditing}
                 />
                 
+                {/* Image count indicator */}
+                <div className="flex justify-between text-sm text-gray-500">
+                  <span>
+                    <span className="font-medium">{selectedFiles.length}</span> of 50 new images selected
+                    {existingPhotos.length > 0 && ` (${existingPhotos.length} existing)`}
+                  </span>
+                  {selectedFiles.length > 0 && (
+                    <button 
+                      type="button" 
+                      onClick={() => {
+                        setSelectedFiles([]);
+                        setPreviewImages([]);
+                      }}
+                      className="text-red-500 hover:text-red-700"
+                    >
+                      Clear new images
+                    </button>
+                  )}
+                </div>
+                
                 {/* Existing Photos */}
                 {existingPhotos.length > 0 && (
                   <div className="mt-4">
@@ -845,6 +1044,21 @@ const CollectionsPage = () => {
             
             <div className="py-4">
               <p className="mb-4">Are you sure you want to delete this collection? This action cannot be undone.</p>
+              
+              {isDeletingPhotos && (
+                <div className="mt-4 mb-4">
+                  <div className="flex justify-between mb-1 text-xs">
+                    <span>Deleting images from storage...</span>
+                    <span>{Math.round(deletingProgress)}%</span>
+                  </div>
+                  <div className="w-full bg-gray-200 rounded-full h-2.5">
+                    <div 
+                      className="bg-primary h-2.5 rounded-full transition-all duration-300 ease-in-out" 
+                      style={{ width: `${deletingProgress}%` }}
+                    ></div>
+                  </div>
+                </div>
+              )}
               
               <DialogFooter>
                 <Button 

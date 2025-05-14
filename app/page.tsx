@@ -41,9 +41,7 @@ export default function Home() {
   const handleGetStarted = () => {
     if (!user) {
       router.push('/auth/login')
-    } else if (isAdmin) {
-      router.push('/admin')
-    } else {
+    }else {
       router.push('/collections')
     }
   }
