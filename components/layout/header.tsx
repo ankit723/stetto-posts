@@ -6,6 +6,7 @@ import Link from "next/link"
 import { ThemeToggle } from "../ui/theme-toggle"
 import { usePathname, useRouter } from "next/navigation"
 import { createClient } from "@/utils/supabase/client"
+import { Button } from "../ui/button"
 
 export default function Header() {
   const pathname = usePathname()
@@ -46,9 +47,9 @@ export default function Header() {
         
         <div className="flex items-center gap-4">
           <ThemeToggle />
-          <button className="flex items-center justify-center rounded-full w-9 h-9 border" onClick={() => handleProfileClick()}>
+          <Button className="flex items-center justify-center rounded-full w-9 h-9 border" onClick={() => handleProfileClick()}>
             <User className="h-5 w-5" />
-          </button>
+          </Button>
         </div>
       </div>
     </header>

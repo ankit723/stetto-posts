@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { PrismaClient } from '@prisma/client'
 
+// Create a single instance of PrismaClient to avoid connection issues
 const prisma = new PrismaClient()
 
 // GET /api/collections - Get all collections
@@ -55,35 +56,46 @@ export async function POST(request: Request) {
       },
     })
 
-    // Create photo records for each image
+    // Create photo records for each image in batches to avoid timeout
     if (images && images.length > 0) {
-      const photoPromises = images.map((url: string) => 
-        prisma.photo.create({
-          data: {
-            url,
-            collections: {
-              connect: {
-                id: collection.id,
+      const BATCH_SIZE = 50
+      
+      // Process in batches to avoid overwhelming the database
+      for (let i = 0; i < images.length; i += BATCH_SIZE) {
+        const batch = images.slice(i, i + BATCH_SIZE)
+        const photoPromises = batch.map((url: string) => 
+          prisma.photo.create({
+            data: {
+              url,
+              collections: {
+                connect: {
+                  id: collection.id,
+                },
               },
             },
-          },
-        })
-      )
+          })
+        )
 
-      await Promise.all(photoPromises)
+        await Promise.all(photoPromises)
+      }
     }
 
     // Get the collection with photos
     const collectionWithPhotos = await prisma.collection.findUnique({
       where: { id: collection.id },
-      include: { photos: true },
+      include: { 
+        photos: {
+          take: 100 // Limit the number of photos returned to avoid payload size issues
+        }
+      },
     })
 
     return NextResponse.json(collectionWithPhotos, { status: 201 })
   } catch (error) {
     console.error('Failed to create collection:', error)
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error'
     return NextResponse.json(
-      { error: 'Failed to create collection' },
+      { error: `Failed to create collection: ${errorMessage}` },
       { status: 500 }
     )
   }

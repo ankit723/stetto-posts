@@ -571,14 +571,14 @@ const AdminPage = () => {
                           width={100}
                           height={100}
                         />
-                        <button
+                        <Button
                           type="button"
                           onClick={() => removeExistingPhoto(photo.id)}
                           className="absolute top-1 right-1 bg-red-500 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"
                           disabled={isSubmitting}
                         >
                           <X className="h-4 w-4" />
-                        </button>
+                        </Button>
                       </div>
                     ))}
                   </div>
@@ -606,14 +606,14 @@ const AdminPage = () => {
                             </div>
                           )}
                         </div>
-                        <button
+                        <Button
                           type="button"
                           onClick={() => removeImage(image.id)}
                           className="absolute top-1 right-1 bg-red-500 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"
                           disabled={isSubmitting || isImageLoading[image.id]}
                         >
                           <X className="h-4 w-4" />
-                        </button>
+                        </Button>
                       </div>
                     ))}
                   </div>

@@ -592,7 +592,7 @@ const CollectionPage = () => {
           className="relative max-w-5xl max-h-[90vh] w-full"
           onClick={(e) => e.stopPropagation()}
         >
-          <button 
+          <Button 
             className="absolute top-4 right-4 text-white bg-black bg-opacity-50 rounded-full p-2"
             onClick={handleCloseLightbox}
           >
@@ -600,7 +600,7 @@ const CollectionPage = () => {
               <line x1="18" y1="6" x2="6" y2="18"></line>
               <line x1="6" y1="6" x2="18" y2="18"></line>
             </svg>
-          </button>
+          </Button>
           
           <div className="flex items-center justify-center">
             <PhotoItem 
@@ -629,7 +629,7 @@ const CollectionPage = () => {
           
           {/* Navigation buttons */}
           {activePhotoIndex > 0 && (
-            <button 
+            <Button 
               className="absolute left-4 top-1/2 -translate-y-1/2 bg-black bg-opacity-50 text-white p-2 rounded-full"
               onClick={(e) => {
                 e.stopPropagation()
@@ -639,11 +639,11 @@ const CollectionPage = () => {
               <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <polyline points="15 18 9 12 15 6"></polyline>
               </svg>
-            </button>
+            </Button>
           )}
           
           {collection.photos.length > 1 && activePhotoIndex < collection.photos.length - 1 && (
-            <button 
+            <Button 
               className="absolute right-4 top-1/2 -translate-y-1/2 bg-black bg-opacity-50 text-white p-2 rounded-full"
               onClick={(e) => {
                 e.stopPropagation()
@@ -653,7 +653,7 @@ const CollectionPage = () => {
               <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <polyline points="9 18 15 12 9 6"></polyline>
               </svg>
-            </button>
+            </Button>
           )}
         </div>
       </div>

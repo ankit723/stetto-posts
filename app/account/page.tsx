@@ -7,6 +7,8 @@ import { logout } from '@/app/auth/actions'
 import WatermarkedCollections from '@/components/account/WatermarkedCollections'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import Link from 'next/link'
+import { Button } from '@/components/ui/button'
+
 export default function AccountPage() {
   const [user, setUser] = useState<any>(null)
   const [loading, setLoading] = useState(true)
@@ -49,12 +51,12 @@ export default function AccountPage() {
               <p className="mt-1 text-sm text-muted-foreground">Manage your account settings and preferences.</p>
             </div>
             <form action={logout as any}>
-              <button 
+              <Button 
                 type="submit"
-                className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-primary-foreground bg-primary hover:bg-primary/90"
+                className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-primary-foreground bg-primary hover:bg-primary/90 "
               >
                 Sign out
-              </button>
+              </Button>
             </form>
           </div>
           <div className="border-t border-border px-4 py-5 sm:p-6">

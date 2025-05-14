@@ -18,7 +18,11 @@ export async function GET(
 
     const collection = await db.collection.findUnique({
       where: { id },
-      include: { photos: true }
+      include: { 
+        photos: {
+          take: 200 // Limit the number of photos returned to avoid payload size issues
+        }
+      }
     })
 
     if (!collection) {
@@ -28,7 +32,8 @@ export async function GET(
     return NextResponse.json(collection)
   } catch (error) {
     console.error('Error fetching collection:', error)
-    return NextResponse.json({ error: 'Failed to fetch collection' }, { status: 500 })
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+    return NextResponse.json({ error: `Failed to fetch collection: ${errorMessage}` }, { status: 500 })
   }
 }
 
