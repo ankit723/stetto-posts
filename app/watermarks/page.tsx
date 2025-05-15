@@ -73,12 +73,11 @@ const WatermarksPage = () => {
       }
       
       try {
-        // Compress the image before setting it
+        // For watermarks, we need to preserve transparency if it exists
+        // but still apply compression
         const compressedFile = await compressImageToFile(file, {
-          quality: 80,
-          maxWidth: 1024, // Watermarks typically don't need to be huge
-          maxHeight: 1024,
-          // Preserve transparency for PNG watermarks
+          // Use PNG format only if the original is PNG (to preserve transparency)
+          // The utility will automatically detect if transparency is needed
           format: file.type.includes('png') ? 'png' : 'jpeg'
         })
         

@@ -4,7 +4,7 @@ import React, { useState, useEffect } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
-import { Loader2, Plus, FolderPlus, Image as ImageIcon, Edit, Trash2, MoreVertical, Upload, X } from 'lucide-react'
+import { Loader2, Plus, FolderPlus, Image as ImageIcon, Edit, Trash2, MoreVertical, Upload, X, CheckSquare } from 'lucide-react'
 import { toast } from 'sonner'
 import Link from 'next/link'
 import {
@@ -27,6 +27,7 @@ import { isUserAdmin } from '../auth/actions'
 import Image from 'next/image'
 import { compressImageToFile } from '@/utils/imageCompression'
 import { useRouter } from 'next/navigation'
+import { Checkbox } from '@/components/ui/checkbox'
 
 // Add import for WatermarkedImage component
 import WatermarkedImage from '@/components/watermark/WatermarkedImage'
@@ -167,6 +168,16 @@ const CollectionsPage = () => {
   const [isDeletingPhotos, setIsDeletingPhotos] = useState(false)
   const [currentCollection, setCurrentCollection] = useState<Collection | null>(null)
   const [collectionToDelete, setCollectionToDelete] = useState<string | null>(null)
+  // Add new state for multi-select
+  const [selectedCollections, setSelectedCollections] = useState<string[]>([])
+  const [selectMode, setSelectMode] = useState(false)
+  const [isBatchDeleting, setIsBatchDeleting] = useState(false)
+  const [isBatchDeleteDialogOpen, setIsBatchDeleteDialogOpen] = useState(false)
+  
+  // Constants for upload configuration
+  const STORAGE_BATCH_SIZE = 10      // Smaller batches for better reliability
+  const MAX_RETRIES = 3              // Reasonable retry attempts
+  const RETRY_DELAY = 1000           // Base delay before retry (ms)
   
   const MAX_IMAGES = 50 // Maximum number of images allowed per collection
   
@@ -258,13 +269,8 @@ const CollectionsPage = () => {
         // Generate a unique ID for this image
         const id = Math.random().toString(36).substring(2)
         
-        // Compress the image
-        const compressedFile = await compressImageToFile(file, {
-          quality: 75,
-          maxWidth: 1920,
-          maxHeight: 1080,
-          format: 'jpeg' // Use JPEG for better compression
-        })
+        // Compress the image using adaptive compression
+        const compressedFile = await compressImageToFile(file)
         
         // Add to processed files
         processedFiles.push(compressedFile)
@@ -337,13 +343,8 @@ const CollectionsPage = () => {
           // Generate a unique ID for this image
           const id = Math.random().toString(36).substring(2)
           
-          // Compress the image
-          const compressedFile = await compressImageToFile(file, {
-            quality: 75,
-            maxWidth: 1920,
-            maxHeight: 1080,
-            format: 'jpeg' // Use JPEG for better compression
-          })
+          // Compress the image using adaptive compression
+          const compressedFile = await compressImageToFile(file)
           
           // Add to processed files
           processedFiles.push(compressedFile)
@@ -412,9 +413,12 @@ const CollectionsPage = () => {
       setIsCreating(true)
       setUploadProgress(0)
       
-      // 1. Create the collection first (without images)
-      console.time('Collection Creation')
-      const createCollectionResponse = await fetch('/api/collections', {
+      // Constants for upload configuration - optimized for reliability
+      const API_BATCH_SIZE = 10             // Smaller API batches to reduce connection issues
+      const API_CALL_DELAY = 500            // Longer delay between API calls
+      
+      // Create the collection first
+      const response = await fetch('/api/collections', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -426,22 +430,13 @@ const CollectionsPage = () => {
         }),
       })
       
-      if (!createCollectionResponse.ok) {
-        const errorData = await createCollectionResponse.json()
+      if (!response.ok) {
+        const errorData = await response.json()
         throw new Error(errorData.error || 'Failed to create collection')
       }
       
-      const newCollection = await createCollectionResponse.json()
+      const newCollection = await response.json()
       const collectionId = newCollection.id
-      console.timeEnd('Collection Creation')
-      
-      // Constants for upload configuration - increased for maximum performance
-      const STORAGE_BATCH_SIZE = 20         // Higher parallelism - 20 concurrent uploads
-      const API_BATCH_SIZE = 30             // Larger API batches to reduce API calls
-      const MAX_RETRIES = 2                 // Slightly reduced retry attempts
-      const RETRY_DELAY = 500               // Shorter retry delay
-      const API_CALL_DELAY = 200            // Minimal delay between API calls
-      const UPLOAD_CHUNK_SIZE = 1024 * 1024 // 1MB chunks for large files
       
       // 2. Preprocess images before upload (in parallel)
       console.time('Image Preprocessing')
@@ -463,15 +458,13 @@ const CollectionsPage = () => {
       })
       console.timeEnd('Image Preprocessing')
       
-      // 3. Process uploads in highly parallel batches
+      // 3. Process uploads in smaller batches for better reliability
       console.time('Storage Uploads')
       const allImageUrls: string[] = []
       
       // Function to upload with retry mechanism and optimizations
       const uploadFileWithRetry = async (fileInfo: typeof fileInfos[0], retryCount = 0): Promise<string | null> => {
         try {
-          // For large files, consider chunked upload in future implementation
-          // Current Supabase client doesn't support chunkSize option directly
           const { error: uploadError } = await supabase.storage
             .from('photos')
             .upload(fileInfo.filePath, fileInfo.file)
@@ -488,8 +481,8 @@ const CollectionsPage = () => {
           return publicUrl
         } catch (error) {
           if (retryCount < MAX_RETRIES) {
-            // Short delay before retry
-            await new Promise(resolve => setTimeout(resolve, RETRY_DELAY))
+            // Longer delay before retry with exponential backoff
+            await new Promise(resolve => setTimeout(resolve, RETRY_DELAY * Math.pow(2, retryCount)))
             return uploadFileWithRetry(fileInfo, retryCount + 1)
           }
           console.error('Upload failed after retries:', error)
@@ -497,7 +490,7 @@ const CollectionsPage = () => {
         }
       }
       
-      // Process uploads in optimized batches for maximum throughput
+      // Process uploads in smaller batches for better reliability
       for (let i = 0; i < fileInfos.length; i += STORAGE_BATCH_SIZE) {
         // Get current batch
         const currentBatch = fileInfos.slice(i, i + STORAGE_BATCH_SIZE)
@@ -518,52 +511,40 @@ const CollectionsPage = () => {
         // Update progress
         processedFiles += currentBatch.length
         setUploadProgress(Math.round((processedFiles / totalFiles) * 100))
+        
+        // Add a delay between batches to prevent overwhelming the server
+        if (i + STORAGE_BATCH_SIZE < fileInfos.length) {
+          await new Promise(resolve => setTimeout(resolve, 300));
+        }
       }
       console.timeEnd('Storage Uploads')
       
-      // 4. Process database updates in larger batches
+      // 4. Process database updates in a single API call
       console.time('Database Updates')
       if (allImageUrls.length > 0) {
-        const updatePromises = []
-        
-        // Break into larger batches for efficient database updates
-        for (let i = 0; i < allImageUrls.length; i += API_BATCH_SIZE) {
-          const imageBatch = allImageUrls.slice(i, i + API_BATCH_SIZE)
+        try {
+          // Send all images in a single API call
+          const response = await fetch(`/api/collections/${collectionId}/photos`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              images: allImageUrls,
+            }),
+          });
           
-          // Use a non-blocking Promise to allow parallel processing
-          const updatePromise = (async () => {
-            try {
-              const response = await fetch(`/api/collections/${collectionId}/photos`, {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                  images: imageBatch,
-                }),
-              })
-              
-              if (!response.ok) {
-                console.error(`Failed to add batch ${Math.floor(i / API_BATCH_SIZE) + 1}`)
-              }
-              
-              return response.ok ? imageBatch.length : 0
-            } catch (error) {
-              console.error(`Error processing batch ${Math.floor(i / API_BATCH_SIZE) + 1}:`, error)
-              return 0
-            }
-          })()
-          
-          updatePromises.push(updatePromise)
-          
-          // Add minimal delay between initiations to prevent overwhelming the connection
-          if (i + API_BATCH_SIZE < allImageUrls.length) {
-            await new Promise(resolve => setTimeout(resolve, API_CALL_DELAY))
+          if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.error || 'Failed to add photos');
           }
+          
+          const result = await response.json();
+          console.log(`Added ${result.addedCount} photos to collection in a single operation`);
+        } catch (error) {
+          console.error('Failed to add photos:', error);
+          toast.error(`Error adding photos: ${error instanceof Error ? error.message : 'Unknown error'}`);
         }
-        
-        // Wait for all database updates to complete
-        await Promise.all(updatePromises)
       }
       console.timeEnd('Database Updates')
       
@@ -620,6 +601,97 @@ const CollectionsPage = () => {
     setIsDeleteDialogOpen(true)
   }
 
+  // Add new function to handle batch deletion
+  const handleBatchDelete = () => {
+    if (selectedCollections.length === 0) {
+      toast.error('No collections selected')
+      return
+    }
+    setIsBatchDeleteDialogOpen(true)
+  }
+
+  // Add new function to toggle collection selection
+  const toggleCollectionSelection = (collectionId: string, e: React.MouseEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    
+    setSelectedCollections(prev => {
+      if (prev.includes(collectionId)) {
+        return prev.filter(id => id !== collectionId)
+      } else {
+        return [...prev, collectionId]
+      }
+    })
+  }
+
+  // Add new function to toggle select mode
+  const toggleSelectMode = () => {
+    setSelectMode(prev => !prev)
+    if (selectMode) {
+      setSelectedCollections([])
+    }
+  }
+
+  // Add new function to select all collections
+  const selectAllCollections = () => {
+    if (selectedCollections.length === collections.length) {
+      setSelectedCollections([])
+    } else {
+      setSelectedCollections(collections.map(c => c.id))
+    }
+  }
+
+  // Add new function to submit batch delete
+  const submitBatchDeleteCollections = async () => {
+    if (selectedCollections.length === 0) return
+    
+    try {
+      setIsBatchDeleting(true)
+      setDeletingProgress(0)
+      
+      // Track total collections and deleted count for progress
+      const totalToDelete = selectedCollections.length
+      let deletedCount = 0
+      
+      // Process deletions sequentially to avoid overwhelming the server
+      for (const collectionId of selectedCollections) {
+        try {
+          const response = await fetch(`/api/collections/${collectionId}`, {
+            method: 'DELETE',
+          })
+          
+          if (!response.ok) {
+            const errorData = await response.json()
+            console.error(`Failed to delete collection ${collectionId}:`, errorData.error)
+            continue
+          }
+          
+          deletedCount++
+          setDeletingProgress(Math.round((deletedCount / totalToDelete) * 100))
+        } catch (error) {
+          console.error(`Error deleting collection ${collectionId}:`, error)
+        }
+      }
+      
+      // Update collections state by removing deleted collections
+      setCollections(collections.filter(c => !selectedCollections.includes(c.id)))
+      setSelectedCollections([])
+      setSelectMode(false)
+      setIsBatchDeleteDialogOpen(false)
+      
+      if (deletedCount === totalToDelete) {
+        toast.success(`Successfully deleted ${deletedCount} collections`)
+      } else {
+        toast.warning(`Deleted ${deletedCount} of ${totalToDelete} collections`)
+      }
+    } catch (error) {
+      console.error('Error in batch deletion:', error)
+      toast.error(`Failed to complete batch deletion: ${error instanceof Error ? error.message : 'Unknown error'}`)
+    } finally {
+      setIsBatchDeleting(false)
+    }
+  }
+
   const submitEditCollection = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
     
@@ -664,13 +736,9 @@ const CollectionsPage = () => {
       const updatedCollection = await metadataResponse.json()
       console.timeEnd('Metadata Update')
       
-      // Constants for upload configuration - increased for maximum performance
-      const STORAGE_BATCH_SIZE = 20         // Higher parallelism - 20 concurrent uploads
-      const API_BATCH_SIZE = 30             // Larger API batches to reduce API calls
-      const MAX_RETRIES = 2                 // Slightly reduced retry attempts
-      const RETRY_DELAY = 500               // Shorter retry delay
-      const API_CALL_DELAY = 200            // Minimal delay between API calls
-      const UPLOAD_CHUNK_SIZE = 1024 * 1024 // 1MB chunks for large files
+      // Constants for upload configuration - optimized for reliability
+      const API_BATCH_SIZE = 10             // Smaller API batches to reduce connection issues
+      const API_CALL_DELAY = 500            // Longer delay between API calls
       
       // Only proceed with image processing if there are new images
       if (selectedFiles.length > 0) {
@@ -694,15 +762,13 @@ const CollectionsPage = () => {
         })
         console.timeEnd('Image Preprocessing')
         
-        // 3. Process uploads in highly parallel batches
+        // 3. Process uploads in smaller batches for better reliability
         console.time('Storage Uploads')
         const allImageUrls: string[] = []
         
         // Function to upload with retry mechanism and optimizations
         const uploadFileWithRetry = async (fileInfo: typeof fileInfos[0], retryCount = 0): Promise<string | null> => {
           try {
-            // For large files, consider chunked upload in future implementation
-            // Current Supabase client doesn't support chunkSize option directly
             const { error: uploadError } = await supabase.storage
               .from('photos')
               .upload(fileInfo.filePath, fileInfo.file)
@@ -715,12 +781,12 @@ const CollectionsPage = () => {
             const { data: { publicUrl } } = supabase.storage
               .from('photos')
               .getPublicUrl(fileInfo.filePath)
-              
+            
             return publicUrl
           } catch (error) {
             if (retryCount < MAX_RETRIES) {
-              // Short delay before retry
-              await new Promise(resolve => setTimeout(resolve, RETRY_DELAY))
+              // Longer delay before retry with exponential backoff
+              await new Promise(resolve => setTimeout(resolve, RETRY_DELAY * Math.pow(2, retryCount)))
               return uploadFileWithRetry(fileInfo, retryCount + 1)
             }
             console.error('Upload failed after retries:', error)
@@ -728,7 +794,7 @@ const CollectionsPage = () => {
           }
         }
         
-        // Process uploads in optimized batches for maximum throughput
+        // Process uploads in smaller batches for better reliability
         for (let i = 0; i < fileInfos.length; i += STORAGE_BATCH_SIZE) {
           // Get current batch
           const currentBatch = fileInfos.slice(i, i + STORAGE_BATCH_SIZE)
@@ -749,52 +815,40 @@ const CollectionsPage = () => {
           // Update progress
           processedFiles += currentBatch.length
           setUploadProgress(Math.round((processedFiles / totalFiles) * 100))
+          
+          // Add a delay between batches to prevent overwhelming the server
+          if (i + STORAGE_BATCH_SIZE < fileInfos.length) {
+            await new Promise(resolve => setTimeout(resolve, 300));
+          }
         }
         console.timeEnd('Storage Uploads')
         
-        // 4. Process database updates in larger batches
+        // 4. Process database updates in a single API call for new images
         console.time('Database Updates')
         if (allImageUrls.length > 0) {
-          const updatePromises = []
-          
-          // Break into larger batches for efficient database updates
-          for (let i = 0; i < allImageUrls.length; i += API_BATCH_SIZE) {
-            const imageBatch = allImageUrls.slice(i, i + API_BATCH_SIZE)
+          try {
+            // Send all new images in a single API call
+            const response = await fetch(`/api/collections/${editCollectionId}/photos`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                images: allImageUrls,
+              }),
+            });
             
-            // Use a non-blocking Promise to allow parallel processing
-            const updatePromise = (async () => {
-              try {
-                const response = await fetch(`/api/collections/${editCollectionId}/photos`, {
-                  method: 'POST',
-                  headers: {
-                    'Content-Type': 'application/json',
-                  },
-                  body: JSON.stringify({
-                    images: imageBatch,
-                  }),
-                })
-                
-                if (!response.ok) {
-                  console.error(`Failed to add batch ${Math.floor(i / API_BATCH_SIZE) + 1}`)
-                }
-                
-                return response.ok ? imageBatch.length : 0
-              } catch (error) {
-                console.error(`Error processing batch ${Math.floor(i / API_BATCH_SIZE) + 1}:`, error)
-                return 0
-              }
-            })()
-            
-            updatePromises.push(updatePromise)
-            
-            // Add minimal delay between initiations to prevent overwhelming the connection
-            if (i + API_BATCH_SIZE < allImageUrls.length) {
-              await new Promise(resolve => setTimeout(resolve, API_CALL_DELAY))
+            if (!response.ok) {
+              const errorData = await response.json();
+              throw new Error(errorData.error || 'Failed to add photos');
             }
+            
+            const result = await response.json();
+            console.log(`Added ${result.addedCount} new photos to collection in a single operation`);
+          } catch (error) {
+            console.error('Failed to add new photos:', error);
+            toast.error(`Error adding new photos: ${error instanceof Error ? error.message : 'Unknown error'}`);
           }
-          
-          // Wait for all database updates to complete
-          await Promise.all(updatePromises)
         }
         console.timeEnd('Database Updates')
         
@@ -933,9 +987,37 @@ const CollectionsPage = () => {
           <p className="text-gray-600 mt-1">Browse the best photo collections</p>
         </div>
         {!adminLoading && isAdmin && (
-          <Button onClick={() => setIsAddDialogOpen(true)}>
-            <Plus className="mr-2 h-4 w-4" /> New Collection
-          </Button>
+          <div className="flex gap-2">
+            {selectMode && (
+              <>
+                <Button 
+                  variant="outline" 
+                  onClick={selectAllCollections}
+                  className="text-sm"
+                >
+                  {selectedCollections.length === collections.length ? 'Deselect All' : 'Select All'}
+                </Button>
+                <Button 
+                  variant="destructive" 
+                  onClick={handleBatchDelete}
+                  disabled={selectedCollections.length === 0}
+                  className="text-sm"
+                >
+                  Delete Selected ({selectedCollections.length})
+                </Button>
+              </>
+            )}
+            <Button 
+              variant={selectMode ? "secondary" : "outline"} 
+              onClick={toggleSelectMode}
+              className="text-sm"
+            >
+              <CheckSquare className="mr-2 h-4 w-4" /> {selectMode ? 'Cancel' : 'Select Multiple'}
+            </Button>
+            <Button onClick={() => setIsAddDialogOpen(true)}>
+              <Plus className="mr-2 h-4 w-4" /> New Collection
+            </Button>
+          </div>
         )}
       </div>
 
@@ -962,9 +1044,33 @@ const CollectionsPage = () => {
           {collections.map(collection => (
             <Card 
               key={collection.id} 
-              className="h-full overflow-hidden hover:shadow-lg transition-all duration-300 cursor-pointer group border-2 hover:border-primary/50"
+              className={`h-full overflow-hidden hover:shadow-lg transition-all duration-300 cursor-pointer group border-2 ${
+                selectedCollections.includes(collection.id) 
+                  ? 'border-primary' 
+                  : 'hover:border-primary/50'
+              }`}
             >
-              <Link href={`/collections/${collection.id}`} className="block h-full">
+              {!adminLoading && isAdmin && selectMode && (
+                <div 
+                  className="absolute top-2 left-2 z-10"
+                  onClick={(e) => toggleCollectionSelection(collection.id, e)}
+                >
+                  <Checkbox 
+                    checked={selectedCollections.includes(collection.id)}
+                    className="h-5 w-5 border-2 border-white bg-white/80"
+                  />
+                </div>
+              )}
+              <Link 
+                href={`/collections/${collection.id}`} 
+                className="block h-full"
+                onClick={(e) => {
+                  if (selectMode) {
+                    e.preventDefault()
+                    toggleCollectionSelection(collection.id, e)
+                  }
+                }}
+              >
                 <div className="aspect-video bg-gray-100 relative overflow-hidden">
                   <CollectionThumbnail collection={collection} />
                   {collection.hasWatermark && (
@@ -982,7 +1088,7 @@ const CollectionsPage = () => {
                       {collection.description || 'No description'}
                     </p>
                   </div>
-                  {!adminLoading && isAdmin && (
+                  {!adminLoading && isAdmin && !selectMode && (
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
                         <Button variant="ghost" size="icon" className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -1384,6 +1490,64 @@ const CollectionsPage = () => {
                     </>
                   ) : (
                     'Delete Collection'
+                  )}
+                </Button>
+              </DialogFooter>
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
+
+      {/* Batch Delete Dialog */}
+      {isAdmin && (
+        <Dialog open={isBatchDeleteDialogOpen} onOpenChange={setIsBatchDeleteDialogOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Delete Multiple Collections</DialogTitle>
+            </DialogHeader>
+            
+            <div className="py-4">
+              <p className="mb-4">
+                Are you sure you want to delete {selectedCollections.length} selected collections? 
+                This action cannot be undone and will delete all photos within these collections.
+              </p>
+              
+              {isBatchDeleting && (
+                <div className="mt-4 mb-4">
+                  <div className="flex justify-between mb-1 text-xs">
+                    <span>Deleting collections...</span>
+                    <span>{Math.round(deletingProgress)}%</span>
+                  </div>
+                  <div className="w-full bg-gray-200 rounded-full h-2.5">
+                    <div 
+                      className="bg-primary h-2.5 rounded-full transition-all duration-300 ease-in-out" 
+                      style={{ width: `${deletingProgress}%` }}
+                    ></div>
+                  </div>
+                </div>
+              )}
+              
+              <DialogFooter>
+                <Button 
+                  type="button" 
+                  variant="outline" 
+                  onClick={() => setIsBatchDeleteDialogOpen(false)}
+                  disabled={isBatchDeleting}
+                >
+                  Cancel
+                </Button>
+                <Button 
+                  type="button" 
+                  variant="destructive" 
+                  onClick={submitBatchDeleteCollections}
+                  disabled={isBatchDeleting}
+                >
+                  {isBatchDeleting ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Deleting...
+                    </>
+                  ) : (
+                    `Delete ${selectedCollections.length} Collections`
                   )}
                 </Button>
               </DialogFooter>

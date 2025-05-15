@@ -13,16 +13,16 @@
 export async function compressImage(
   file: File,
   options: {
-    quality?: number; // 0-1, default 0.8
+    quality?: number; // 0-1, default 0.6 (higher compression)
     maxWidth?: number; // Maximum width in pixels
     maxHeight?: number; // Maximum height in pixels
-    format?: 'jpeg' | 'png' | 'webp'; // Output format, default is same as input
+    format?: 'jpeg' | 'png' | 'webp'; // Output format, default is jpeg for better compression
   } = {}
 ): Promise<Blob> {
-  // Default options
-  const quality = options.quality !== undefined ? options.quality / 100 : 0.8;
-  const maxWidth = options.maxWidth || 2000;
-  const maxHeight = options.maxHeight || 2000;
+  // Default options with higher compression
+  const quality = options.quality !== undefined ? options.quality / 100 : 0.5; // Lower quality = higher compression
+  const maxWidth = options.maxWidth || 1600; // Smaller default dimensions
+  const maxHeight = options.maxHeight || 1600;
   
   // Create image from file
   const img = new Image();
@@ -64,18 +64,13 @@ export async function compressImage(
   // Draw image on canvas
   ctx.drawImage(img, 0, 0, width, height);
   
-  // Determine output format
+  // Determine output format - prefer JPEG for better compression
   let format = options.format;
   if (!format) {
-    // Try to use the same format as the input
-    if (file.type.includes('jpeg') || file.type.includes('jpg')) {
-      format = 'jpeg';
-    } else if (file.type.includes('png')) {
+    // Use JPEG by default for better compression unless PNG is explicitly needed (for transparency)
+    if (file.type.includes('png') && needsTransparency(canvas)) {
       format = 'png';
-    } else if (file.type.includes('webp')) {
-      format = 'webp';
     } else {
-      // Default to jpeg if format is unknown or unsupported
       format = 'jpeg';
     }
   }
@@ -113,6 +108,34 @@ export async function compressImage(
 }
 
 /**
+ * Checks if an image has transparency that needs to be preserved
+ * 
+ * @param canvas - The canvas containing the image
+ * @returns True if the image has transparency that should be preserved
+ */
+function needsTransparency(canvas: HTMLCanvasElement): boolean {
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return false;
+  
+  // Sample the image data to check for transparency
+  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const data = imageData.data;
+  
+  // Check a subset of pixels for transparency (checking every pixel would be too slow)
+  const pixelCount = data.length / 4; // RGBA = 4 bytes per pixel
+  const sampleSize = Math.min(pixelCount, 10000); // Check up to 10,000 pixels
+  const stride = Math.max(1, Math.floor(pixelCount / sampleSize));
+  
+  for (let i = 3; i < data.length; i += 4 * stride) {
+    if (data[i] < 255) { // Alpha channel less than 255 means transparency
+      return true;
+    }
+  }
+  
+  return false;
+}
+
+/**
  * Compresses an image and returns it as a new File object
  * 
  * @param file - The image file to compress
@@ -128,7 +151,21 @@ export async function compressImageToFile(
     format?: 'jpeg' | 'png' | 'webp';
   } = {}
 ): Promise<File> {
-  const compressedBlob = await compressImage(file, options);
+  // Apply stronger compression by default for specific file types
+  let compressionOptions = { ...options };
+  
+  // If no quality specified, use different defaults based on file size
+  if (compressionOptions.quality === undefined) {
+    if (file.size > 5 * 1024 * 1024) { // > 5MB
+      compressionOptions.quality = 50; // Heavy compression
+    } else if (file.size > 1 * 1024 * 1024) { // > 1MB
+      compressionOptions.quality = 60; // Medium-heavy compression
+    } else {
+      compressionOptions.quality = 70; // Standard compression
+    }
+  }
+  
+  const compressedBlob = await compressImage(file, compressionOptions);
   
   // Determine the output format and create appropriate mime type
   let mimeType: string;
@@ -153,9 +190,14 @@ export async function compressImageToFile(
         extension = file.name.split('.').pop() || 'jpg';
     }
   } else {
-    // Keep original mime type if no format specified
-    mimeType = file.type;
-    extension = file.name.split('.').pop() || 'jpg';
+    // Default to JPEG for better compression unless we detected PNG with transparency
+    if (compressedBlob.type.includes('png')) {
+      mimeType = 'image/png';
+      extension = 'png';
+    } else {
+      mimeType = 'image/jpeg';
+      extension = 'jpg';
+    }
   }
   
   // Create a new filename

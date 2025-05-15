@@ -149,13 +149,9 @@ const AdminPage = () => {
         // Generate a unique ID for this image
         const id = Math.random().toString(36).substring(2)
         
-        // Compress the image
-        const compressedFile = await compressImageToFile(file, {
-          quality: 75,
-          maxWidth: 1920,
-          maxHeight: 1080,
-          format: 'jpeg' // Use JPEG for better compression
-        })
+        // Compress the image using adaptive compression
+        // No need to specify quality - the utility will use adaptive settings based on file size
+        const compressedFile = await compressImageToFile(file)
         
         // Add to processed files
         processedFiles.push(compressedFile)
