@@ -425,100 +425,148 @@ const CollectionPage = () => {
       setDownloadProgress(5)
       setDownloadStatus('Preparing download...')
       
-      // Show warning if collection has more than 500 images
-      if (collection?.photos && collection.photos.length > 500) {
-        toast.warning(`This collection has ${collection.photos.length} images. Due to processing limits, only the first 500 images will be downloaded.`)
-      } else {
-        toast.info('Starting download of all photos. This may take a while...')
+      // First, get collection size and chunk information
+      const sizeResponse = await fetch(`/api/collections/${id}/size`)
+      
+      if (!sizeResponse.ok) {
+        const errorData = await sizeResponse.json()
+        throw new Error(errorData.error || 'Failed to get collection information')
       }
       
-      // Use fetch with blob response type for downloading
-      const controller = new AbortController()
-      const timeoutId = setTimeout(() => controller.abort(), 5 * 60 * 1000) // 5 minute timeout
+      const sizeData = await sizeResponse.json()
+      const { totalPhotos, totalChunks, chunkSize } = sizeData
       
-      setDownloadProgress(15)
-      setDownloadStatus('Connecting to server...')
+      if (totalPhotos === 0) {
+        toast.error('No photos to download')
+        return
+      }
       
-      const response = await fetch(`/api/collections/${id}/download`, {
-        signal: controller.signal,
-        cache: 'no-store' // Ensure we don't get a cached response
-      })
+      // Show warning if collection has more than 500 images
+      if (totalPhotos > 500) {
+        toast.warning(`This collection has ${totalPhotos} images. Due to processing limits, only the first 500 images will be downloaded.`)
+      } else {
+        toast.info(`Starting download of ${totalPhotos} photos in ${totalChunks} chunks. This may take a while...`)
+      }
       
-      clearTimeout(timeoutId)
+      // Create an array to store all chunk blobs
+      const chunkBlobs: Blob[] = []
       
-      if (!response.ok) {
-        if (response.headers.get('Content-Type')?.includes('application/json')) {
-          const errorData = await response.json()
-          throw new Error(errorData.error || 'Failed to download collection')
-        } else {
-          throw new Error(`Server error: ${response.status} ${response.statusText}`)
+      // Download each chunk
+      for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
+        setDownloadStatus(`Downloading chunk ${chunkIndex + 1} of ${totalChunks}...`)
+        setDownloadProgress(10 + Math.floor((chunkIndex / totalChunks) * 60))
+        
+        // Use fetch with blob response type for downloading the current chunk
+        const controller = new AbortController()
+        const timeoutId = setTimeout(() => controller.abort(), 2 * 60 * 1000) // 2 minute timeout per chunk
+        
+        try {
+          const response = await fetch(`/api/collections/${id}/chunked-download?chunk=${chunkIndex}&totalChunks=${totalChunks}`, {
+            signal: controller.signal,
+            cache: 'no-store' // Ensure we don't get a cached response
+          })
+          
+          clearTimeout(timeoutId)
+          
+          if (!response.ok) {
+            if (response.headers.get('Content-Type')?.includes('application/json')) {
+              const errorData = await response.json()
+              throw new Error(errorData.error || `Failed to download chunk ${chunkIndex + 1}`)
+            } else {
+              throw new Error(`Server error: ${response.status} ${response.statusText}`)
+            }
+          }
+          
+          // Get the blob from the response
+          const blob = await response.blob()
+          chunkBlobs.push(blob)
+          
+        } catch (error) {
+          console.error(`Error downloading chunk ${chunkIndex}:`, error)
+          if (error instanceof Error && error.name === 'AbortError') {
+            toast.error(`Chunk ${chunkIndex + 1} download timed out. Trying to continue with available chunks.`)
+          } else {
+            toast.error(`Failed to download chunk ${chunkIndex + 1}: ${error instanceof Error ? error.message : 'Unknown error'}`)
+          }
+          // Continue with available chunks
         }
       }
       
-      setDownloadProgress(30)
-      setDownloadStatus('Processing images...')
+      // Check if we have any chunks
+      if (chunkBlobs.length === 0) {
+        throw new Error('Failed to download any chunks')
+      }
       
-      // Start a progress simulation since we can't get real-time progress from the server
-      const progressInterval = setInterval(() => {
-        setDownloadProgress(prev => {
-          // Gradually increase progress up to 90%
-          if (prev < 90) {
-            const increment = Math.max(1, Math.floor((90 - prev) / 10))
-            return prev + increment
-          }
-          return prev
-        })
+      setDownloadStatus(`Combining ${chunkBlobs.length} chunks...`)
+      setDownloadProgress(75)
+      
+      // Combine all chunks into a single zip file
+      const combinedZip = new JSZip()
+      
+      // Process each chunk
+      for (let i = 0; i < chunkBlobs.length; i++) {
+        setDownloadStatus(`Processing chunk ${i + 1} of ${chunkBlobs.length}...`)
+        setDownloadProgress(75 + Math.floor((i / chunkBlobs.length) * 15))
         
-        // Update status messages based on progress
-        setDownloadStatus(prev => {
-          const progress = downloadProgress
-          if (progress < 40) return 'Processing images...'
-          if (progress < 60) return 'Applying watermarks...'
-          if (progress < 80) return 'Generating zip file...'
-          return 'Finalizing download...'
-        })
-      }, 800)
+        try {
+          // Load the chunk zip
+          const chunkZip = await JSZip.loadAsync(chunkBlobs[i])
+          
+          // Extract metadata
+          const metadataFile = chunkZip.file('chunk_metadata.json')
+          if (!metadataFile) {
+            console.error(`Chunk ${i} is missing metadata`)
+            continue
+          }
+          
+          const metadata = JSON.parse(await metadataFile.async('text'))
+          
+          // Add all files from this chunk to the combined zip (except metadata)
+          for (const filename in chunkZip.files) {
+            if (filename !== 'chunk_metadata.json') {
+              const fileData = await chunkZip.files[filename].async('blob')
+              combinedZip.file(filename, fileData)
+            }
+          }
+        } catch (error) {
+          console.error(`Error processing chunk ${i}:`, error)
+          toast.error(`Error processing chunk ${i + 1}. Some photos may be missing.`)
+        }
+      }
       
-      // Get the blob from the response
-      const blob = await response.blob()
+      // Add a README file to the combined zip
+      combinedZip.file('README.txt', `Collection: ${collection?.name}
+Description: ${collection?.description || 'No description'}
+Photos included: ${chunkBlobs.length * chunkSize > totalPhotos ? totalPhotos : chunkBlobs.length * chunkSize} ${totalPhotos > 500 ? `(out of ${totalPhotos} total)` : ''}
+Downloaded on: ${new Date().toLocaleString()}
+
+This collection was watermarked with the Photo Watermark app.
+Photos are named with their sequence number to preserve the original order.
+${totalPhotos > 500 ? `\nNote: This download includes the first 500 photos out of ${totalPhotos} total photos in the collection due to processing limits.` : ''}
+`)
       
-      // Clear the interval once we have the response
-      clearInterval(progressInterval)
+      setDownloadStatus('Generating final zip file...')
+      setDownloadProgress(90)
+      
+      // Generate the combined zip file
+      const combinedBlob = await combinedZip.generateAsync({
+        type: 'blob',
+        compression: 'DEFLATE',
+        compressionOptions: {
+          level: 3 // Lower compression level for faster processing
+        }
+      })
+      
       setDownloadProgress(95)
       setDownloadStatus('Downloading file...')
       
-      // Check if we got a zip file or just a text file (which might contain an error)
-      if (blob.type === 'text/plain' && blob.size < 10000) {
-        // Small text file might be an error message
-        const text = await blob.text()
-        if (text.toLowerCase().includes('error') || text.toLowerCase().includes('fail')) {
-          throw new Error(text)
-        }
-      }
-      
-      // Check if the zip file is too small (might be empty or contain only the README)
-      if (blob.type === 'application/zip' && blob.size < 1000) {
-        toast.warning('The downloaded file is very small and may not contain all photos')
-      }
-      
       // Create a download link
-      const downloadUrl = URL.createObjectURL(blob)
+      const downloadUrl = URL.createObjectURL(combinedBlob)
       const a = document.createElement('a')
       a.href = downloadUrl
       
-      // Get the filename from the Content-Disposition header if available
-      const contentDisposition = response.headers.get('Content-Disposition')
-      let filename = 'collection.zip'
-      
-      if (contentDisposition) {
-        const filenameMatch = contentDisposition.match(/filename="(.+)"/)
-        if (filenameMatch) {
-          filename = filenameMatch[1]
-        }
-      } else if (collection) {
-        // Fallback to using the collection name
-        filename = `${collection.name.replace(/[^a-z0-9]/gi, '_').toLowerCase()}_collection.zip`
-      }
+      // Set the filename
+      const filename = collection ? `${collection.name.replace(/[^a-z0-9]/gi, '_').toLowerCase()}_collection.zip` : 'collection.zip'
       
       setDownloadProgress(100)
       setDownloadStatus('Download complete!')
@@ -531,40 +579,7 @@ const CollectionPage = () => {
       document.body.removeChild(a)
       URL.revokeObjectURL(downloadUrl)
       
-      // If the file contains a processing report, show a notification
-      if (blob.size > 1000) {
-        const zip = new JSZip()
-        try {
-          const zipContents = await zip.loadAsync(blob)
-          if (zipContents.files['processing_report.txt']) {
-            const reportContent = await zipContents.files['processing_report.txt'].async('text')
-            const failedMatch = reportContent.match(/Failed to process: (\d+)/)
-            const totalMatch = reportContent.match(/Total photos: (\d+)/)
-            const successMatch = reportContent.match(/Successfully processed: (\d+)/)
-            
-            if (failedMatch && parseInt(failedMatch[1]) > 0) {
-              const failed = parseInt(failedMatch[1])
-              const total = totalMatch ? parseInt(totalMatch[1]) : (collection?.photos.length || 0)
-              const success = successMatch ? parseInt(successMatch[1]) : (total - failed)
-              
-              if (success === 0) {
-                toast.error('Failed to process any photos. Please try again later or contact support.')
-              } else if (failed > 0) {
-                const percentFailed = Math.round((failed / total) * 100)
-                if (percentFailed > 50) {
-                  toast.error(`${percentFailed}% of photos failed processing. Please try again later.`)
-                } else {
-                  toast.warning(`${success} photos processed successfully, ${failed} photos failed. See the processing_report.txt in the zip file for details.`)
-                }
-              }
-            }
-          }
-        } catch (e) {
-          console.error('Error checking zip contents:', e)
-        }
-      }
-      
-      toast.success(`Collection downloaded successfully (${Math.round(blob.size / 1024)} KB)`)
+      toast.success(`Collection downloaded successfully (${Math.round(combinedBlob.size / 1024)} KB)`)
     } catch (error: unknown) {
       console.error('Error downloading collection:', error)
       if (error instanceof Error && error.name === 'AbortError') {
@@ -742,11 +757,6 @@ const CollectionPage = () => {
               {collection.description && (
                 <p className="text-gray-600 mb-4">{collection.description}</p>
               )}
-              <p className="text-sm text-gray-500">
-                {collection.user ? 
-                  `By ${collection.user.firstName} ${collection.user.lastName}` : 
-                  'By Unknown User'}
-              </p>
             </div>
             
             <div className="flex flex-wrap gap-3 mt-4 md:mt-0">
@@ -806,6 +816,11 @@ const CollectionPage = () => {
                   style={{ width: `${downloadProgress}%` }}
                 ></div>
               </div>
+              {downloadStatus.includes('chunk') && (
+                <div className="mt-2 text-xs text-gray-500">
+                  <p>Downloading in chunks to improve reliability. The final file will be combined automatically.</p>
+                </div>
+              )}
             </div>
           )}
           
