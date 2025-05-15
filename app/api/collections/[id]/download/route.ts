@@ -4,7 +4,7 @@ import JSZip from 'jszip'
 import { db } from '@/utils/db'
 import sharp from 'sharp'
 
-export const maxDuration = 120; // Set max duration to 120 seconds for processing larger collections
+export const maxDuration = 60; // Set max duration to 120 seconds for processing larger collections
 export const dynamic = 'force-dynamic'; // Disable caching for this route
 
 // Set memory limits for Sharp to prevent memory issues
