@@ -20,7 +20,7 @@ export async function compressImage(
   } = {}
 ): Promise<Blob> {
   // Default options with higher compression
-  const quality = options.quality !== undefined ? options.quality / 100 : 0.5; // Lower quality = higher compression
+  const quality = options.quality !== undefined ? options.quality / 100 : 0.4; // Lower quality = higher compression
   const maxWidth = options.maxWidth || 1600; // Smaller default dimensions
   const maxHeight = options.maxHeight || 1600;
   
