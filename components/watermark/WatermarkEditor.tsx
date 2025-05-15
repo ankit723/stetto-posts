@@ -81,6 +81,14 @@ const WatermarkEditor = ({
   const [photoNode, setPhotoNode] = useState<HTMLImageElement | null>(null)
   const [watermarkNode, setWatermarkNode] = useState<HTMLImageElement | null>(null)
   
+  // Function to force update the transformer
+  const updateTransformer = () => {
+    if (watermarkRef.current && transformerRef.current) {
+      transformerRef.current.nodes([watermarkRef.current])
+      transformerRef.current.getLayer()?.batchDraw()
+    }
+  }
+  
   // Load the photo dimensions once it's loaded
   useEffect(() => {
     if (photoRef.current && photoRef.current.complete) {
@@ -117,6 +125,9 @@ const WatermarkEditor = ({
         image.onload = () => {
           setWatermarkNode(image)
           setOriginalAspectRatio(image.naturalWidth / image.naturalHeight)
+          
+          // Force update transformer after a small delay
+          setTimeout(updateTransformer, 100)
         }
       }
     }
@@ -141,6 +152,9 @@ const WatermarkEditor = ({
           width: photoSize.width * scale,
           height: photoSize.height * scale
         })
+        
+        // Update transformer after stage size is set
+        setTimeout(updateTransformer, 100)
       }
     }
     
@@ -163,6 +177,15 @@ const WatermarkEditor = ({
         })
         setRotation(0)
         setDimensions({ width: 200, height: 200 })
+      } else if (initialConfig && initialConfig.watermarkId === selectedWatermarkId) {
+        // Ensure we properly set the position and dimensions for editing
+        const adjustedPosition = {
+          x: initialConfig.position.x + (initialConfig.dimensions.width / 2),
+          y: initialConfig.position.y + (initialConfig.dimensions.height / 2)
+        }
+        setPosition(adjustedPosition)
+        setDimensions(initialConfig.dimensions)
+        setRotation(initialConfig.rotation)
       }
     }
   }, [selectedWatermarkId, photoSize, initialConfig])
@@ -174,6 +197,14 @@ const WatermarkEditor = ({
       transformerRef.current.getLayer()?.batchDraw()
     }
   }, [watermarkNode])
+  
+  // Add a new useEffect to ensure transformer is attached after position and dimensions are set
+  useEffect(() => {
+    if (watermarkRef.current && transformerRef.current && position.x !== 0 && position.y !== 0) {
+      transformerRef.current.nodes([watermarkRef.current])
+      layerRef.current?.batchDraw()
+    }
+  }, [position, dimensions, rotation])
   
   const handleSave = () => {
     if (!selectedWatermarkId) {

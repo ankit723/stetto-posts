@@ -21,7 +21,12 @@ export async function POST(
 
     const collection = await executeWithRetry(() => db.collection.findUnique({
       where: { id },
-      select: { id: true } // Only select the id to minimize data transfer
+      include: {
+        photos: {
+          orderBy: { sequence: 'desc' },
+          take: 1,
+        }
+      }
     }))
 
     console.log('Collection data:', collection)
@@ -30,9 +35,19 @@ export async function POST(
       return NextResponse.json({ error: 'Collection not found' }, { status: 404 })
     }
 
+    // Get the current highest sequence number
+    let currentMaxSequence = 0
+    if (collection.photos && collection.photos.length > 0) {
+      currentMaxSequence = collection.photos[0].sequence
+      console.log(`Current max sequence: ${currentMaxSequence}`)
+    }
+
     // Process images in optimal batch sizes
     const BATCH_SIZE = 100
     let addedCount = 0
+    
+    // Log the images array to verify order
+    console.log(`Processing ${images.length} images in order:`, images.slice(0, 5).map((url, idx) => `${idx}: ${url.substring(0, 50)}...`))
     
     // Use a single transaction for the entire operation
     await executeWithRetry(() => 
@@ -41,20 +56,31 @@ export async function POST(
         for (let i = 0; i < images.length; i += BATCH_SIZE) {
           const batch = images.slice(i, i + BATCH_SIZE)
           
-          // Create photo records first without relationships
-          const photoData = batch.map(url => ({ url }))
-          const createdPhotos = await tx.photo.createMany({
-            data: photoData,
-            skipDuplicates: true,
+          // Create photo records with sequence numbers
+          // The sequence number is critical for preserving the order of images
+          const photoData = batch.map((url, index) => {
+            // Each image gets a sequence number based on its position in the original array
+            // Starting from 1 to ensure all sequences are positive and in order
+            const seq = currentMaxSequence + i + index + 1
+            console.log(`Setting sequence ${seq} for image at index ${i + index}: ${url.substring(0, 30)}...`)
+            return { 
+              url, 
+              sequence: seq
+            }
           })
           
-          // Get the IDs of the created photos
-          const createdPhotoIds = await tx.photo.findMany({
-            where: {
-              url: { in: batch }
-            },
-            select: { id: true }
-          })
+          console.log(`Created ${photoData.length} photo records with sequences from ${photoData[0]?.sequence} to ${photoData[photoData.length-1]?.sequence}`)
+          
+          // Create photos individually to preserve exact order
+          const createdPhotoIds = []
+          for (const data of photoData) {
+            const photo = await tx.photo.create({
+              data: data,
+              select: { id: true, sequence: true }
+            })
+            createdPhotoIds.push({ id: photo.id })
+            console.log(`Created photo with ID ${photo.id} and sequence ${photo.sequence}`)
+          }
           
           // Connect photos to collection in batch
           if (createdPhotoIds.length > 0) {
@@ -68,6 +94,7 @@ export async function POST(
             })
             
             addedCount += createdPhotoIds.length
+            console.log(`Connected ${createdPhotoIds.length} photos to collection ${id}`)
           }
         }
       }, {
@@ -76,6 +103,8 @@ export async function POST(
       })
     )
 
+    console.log(`Successfully added ${addedCount} photos to collection ${id}`)
+    
     return NextResponse.json({ 
       success: true, 
       addedCount,

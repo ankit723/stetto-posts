@@ -2,6 +2,37 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { db } from '@/utils/db'
 
+// Helper function to ensure all photos have valid sequence values
+async function ensurePhotoSequences(photos: any[], collectionId: string) {
+  // Check if any photos are missing sequence values (0 is the default)
+  const needsSequencing = photos.some(photo => photo.sequence === 0)
+  
+  if (needsSequencing) {
+    console.log(`Collection ${collectionId}: Fixing missing sequence values for photos`)
+    
+    // Update photos with proper sequence values
+    for (let i = 0; i < photos.length; i++) {
+      const photo = photos[i]
+      if (photo.sequence === 0) {
+        // Update the photo with a new sequence value
+        await db.photo.update({
+          where: { id: photo.id },
+          data: { sequence: i + 1 }
+        })
+        
+        // Update the in-memory object as well
+        photo.sequence = i + 1
+      }
+    }
+    
+    // Sort the photos by their new sequence values
+    photos.sort((a, b) => a.sequence - b.sequence)
+    console.log(`Collection ${collectionId}: Fixed sequence values for ${photos.length} photos`)
+  }
+  
+  return photos
+}
+
 export async function GET(
   request: NextRequest,
   { params }: { params: { id: string } }
@@ -20,6 +51,9 @@ export async function GET(
       where: { id },
       include: { 
         photos: {
+          orderBy: {
+            sequence: 'asc' // Order photos by sequence
+          },
           take: 200 // Limit the number of photos returned to avoid payload size issues
         }
       }
@@ -27,6 +61,11 @@ export async function GET(
 
     if (!collection) {
       return NextResponse.json({ error: 'Collection not found' }, { status: 404 })
+    }
+
+    // Ensure all photos have proper sequence values
+    if (collection.photos && collection.photos.length > 0) {
+      collection.photos = await ensurePhotoSequences(collection.photos, id)
     }
 
     return NextResponse.json(collection)
@@ -137,16 +176,39 @@ export async function PUT(
       })
     }
 
+    // Get the current highest sequence number
+    const highestSequenceResult = await db.photo.findFirst({
+      where: {
+        collections: {
+          some: {
+            id
+          }
+        }
+      },
+      orderBy: {
+        sequence: 'desc'
+      },
+      select: {
+        sequence: true
+      }
+    })
+
+    let currentMaxSequence = highestSequenceResult?.sequence || 0
+
     // Add new photos in batches for better performance
     if (newImages && newImages.length > 0) {
       const BATCH_SIZE = 50
       
       for (let i = 0; i < newImages.length; i += BATCH_SIZE) {
         const batch = newImages.slice(i, i + BATCH_SIZE)
-        const photoPromises = batch.map((url: string) => 
-          db.photo.create({
+        
+        // Create photos with sequence numbers
+        for (let j = 0; j < batch.length; j++) {
+          const url = batch[j]
+          await db.photo.create({
             data: {
               url,
+              sequence: currentMaxSequence + i + j + 1,
               collections: {
                 connect: {
                   id: id,
@@ -154,9 +216,7 @@ export async function PUT(
               },
             },
           })
-        )
-
-        await Promise.all(photoPromises)
+        }
       }
     }
 
@@ -164,7 +224,11 @@ export async function PUT(
     const collectionWithPhotos = await db.collection.findUnique({
       where: { id },
       include: { 
-        photos: true,
+        photos: {
+          orderBy: {
+            sequence: 'asc'
+          }
+        },
         user: {
           select: {
             id: true,
@@ -174,6 +238,11 @@ export async function PUT(
         },
       },
     })
+
+    // Ensure all photos have proper sequence values
+    if (collectionWithPhotos && collectionWithPhotos.photos && collectionWithPhotos.photos.length > 0) {
+      collectionWithPhotos.photos = await ensurePhotoSequences(collectionWithPhotos.photos, id)
+    }
 
     return NextResponse.json(collectionWithPhotos)
   } catch (error) {

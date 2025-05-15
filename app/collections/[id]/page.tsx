@@ -27,6 +27,7 @@ import {
 interface Photo {
   id: string
   url: string
+  sequence: number
 }
 
 interface User {
@@ -138,12 +139,14 @@ const CollectionPage = () => {
   const [isLoadingWatermarks, setIsLoadingWatermarks] = useState(false)
   const [isDownloadingCollection, setIsDownloadingCollection] = useState(false)
   const [isSavingConfig, setIsSavingConfig] = useState(false)
-  const [downloadingBatch, setDownloadingBatch] = useState<string | null>(null)
   const [isSharing, setIsSharing] = useState(false)
   const [isLoadingWatermarkModal, setIsLoadingWatermarkModal] = useState(false)
-  const [selectedBatch, setSelectedBatch] = useState(1)
-  const [totalBatches, setTotalBatches] = useState(1)
-  const BATCH_SIZE = 40 // This should match MAX_PHOTOS_PER_BATCH in the API
+  const [error, setError] = useState<string | null>(null)
+  const [currentPhotoIndex, setCurrentPhotoIndex] = useState(0)
+  const [loadedImages, setLoadedImages] = useState(0)
+  const [totalImages, setTotalImages] = useState(0)
+  const [downloadProgress, setDownloadProgress] = useState(0)
+  const [downloadStatus, setDownloadStatus] = useState('')
 
   useEffect(() => {
     const fetchCollection = async () => {
@@ -152,14 +155,32 @@ const CollectionPage = () => {
         const response = await fetch(`/api/collections/${id}`)
         
         if (!response.ok) {
-          throw new Error('Collection not found')
+          throw new Error('Failed to fetch collection')
         }
         
         const data = await response.json()
+        
+        // Debug: Log the original order and sequence values of photos
+        console.log('Original photos order from API:', data.photos.map((p: Photo, idx: number) => 
+          `[${idx}] id=${p.id.substring(0, 6)}, seq=${p.sequence}, url=${p.url.substring(0, 30)}...`
+        ))
+        
+        // Debug: Log the sequence values of photos
+        console.log('Photos before sorting:', data.photos.map((p: Photo) => ({ id: p.id.substring(0, 6), sequence: p.sequence })))
+        
+        // Ensure photos are sorted by sequence
+        if (data.photos) {
+          data.photos.sort((a: Photo, b: Photo) => a.sequence - b.sequence)
+        }
+        
+        // Debug: Log the sequence values after sorting
+        console.log('Photos after sorting:', data.photos.map((p: Photo) => ({ id: p.id.substring(0, 6), sequence: p.sequence })))
+        
         setCollection(data)
+        setTotalImages(data.photos?.length || 0)
       } catch (error) {
         console.error('Error fetching collection:', error)
-        toast.error('Failed to load collection. Please try again.')
+        setError('Failed to load collection. Please try again.')
       } finally {
         setLoading(false)
       }
@@ -210,15 +231,6 @@ const CollectionPage = () => {
     }
   }
 
-  useEffect(() => {
-    // Calculate total batches whenever collection changes
-    if (collection?.photos?.length) {
-      const batches = Math.ceil(collection.photos.length / BATCH_SIZE)
-      console.log(`Calculating batches: ${collection.photos.length} photos / ${BATCH_SIZE} batch size = ${batches} batches`)
-      setTotalBatches(batches)
-    }
-  }, [collection, BATCH_SIZE])
-
   const handlePhotoClick = (index: number) => {
     setActivePhotoIndex(index)
     setIsLightboxOpen(true)
@@ -229,7 +241,7 @@ const CollectionPage = () => {
   }
 
   const handleNextPhoto = () => {
-    if (collection && activePhotoIndex !== null && activePhotoIndex < collection.photos.length - 1) {
+    if (activePhotoIndex !== null && collection?.photos && activePhotoIndex < collection.photos.length - 1) {
       setActivePhotoIndex(activePhotoIndex + 1)
     }
   }
@@ -402,7 +414,7 @@ const CollectionPage = () => {
     }
   }
 
-  const handleDownloadCollection = async (batchNumber = selectedBatch) => {
+  const handleDownloadCollection = async () => {
     if (!watermarkConfig) {
       toast.error('Please configure a watermark first')
       return
@@ -410,19 +422,24 @@ const CollectionPage = () => {
     
     try {
       setIsDownloadingCollection(true)
-      setDownloadingBatch(batchNumber.toString())
+      setDownloadProgress(5)
+      setDownloadStatus('Preparing download...')
       
-      const totalPhotos = collection?.photos?.length || 0
-      const batchStart = (batchNumber - 1) * BATCH_SIZE + 1
-      const batchEnd = Math.min(batchNumber * BATCH_SIZE, totalPhotos)
-      
-      toast.info(`Starting download of photos ${batchStart}-${batchEnd} (batch ${batchNumber}/${totalBatches}). This may take a while...`)
+      // Show warning if collection has more than 500 images
+      if (collection?.photos && collection.photos.length > 500) {
+        toast.warning(`This collection has ${collection.photos.length} images. Due to processing limits, only the first 500 images will be downloaded.`)
+      } else {
+        toast.info('Starting download of all photos. This may take a while...')
+      }
       
       // Use fetch with blob response type for downloading
       const controller = new AbortController()
       const timeoutId = setTimeout(() => controller.abort(), 5 * 60 * 1000) // 5 minute timeout
       
-      const response = await fetch(`/api/collections/${id}/download?batch=${batchNumber}`, {
+      setDownloadProgress(15)
+      setDownloadStatus('Connecting to server...')
+      
+      const response = await fetch(`/api/collections/${id}/download`, {
         signal: controller.signal,
         cache: 'no-store' // Ensure we don't get a cached response
       })
@@ -438,8 +455,37 @@ const CollectionPage = () => {
         }
       }
       
+      setDownloadProgress(30)
+      setDownloadStatus('Processing images...')
+      
+      // Start a progress simulation since we can't get real-time progress from the server
+      const progressInterval = setInterval(() => {
+        setDownloadProgress(prev => {
+          // Gradually increase progress up to 90%
+          if (prev < 90) {
+            const increment = Math.max(1, Math.floor((90 - prev) / 10))
+            return prev + increment
+          }
+          return prev
+        })
+        
+        // Update status messages based on progress
+        setDownloadStatus(prev => {
+          const progress = downloadProgress
+          if (progress < 40) return 'Processing images...'
+          if (progress < 60) return 'Applying watermarks...'
+          if (progress < 80) return 'Generating zip file...'
+          return 'Finalizing download...'
+        })
+      }, 800)
+      
       // Get the blob from the response
       const blob = await response.blob()
+      
+      // Clear the interval once we have the response
+      clearInterval(progressInterval)
+      setDownloadProgress(95)
+      setDownloadStatus('Downloading file...')
       
       // Check if we got a zip file or just a text file (which might contain an error)
       if (blob.type === 'text/plain' && blob.size < 10000) {
@@ -473,6 +519,9 @@ const CollectionPage = () => {
         // Fallback to using the collection name
         filename = `${collection.name.replace(/[^a-z0-9]/gi, '_').toLowerCase()}_collection.zip`
       }
+      
+      setDownloadProgress(100)
+      setDownloadStatus('Download complete!')
       
       a.download = filename
       document.body.appendChild(a)
@@ -526,13 +575,21 @@ const CollectionPage = () => {
       }
     } finally {
       setIsDownloadingCollection(false)
-      setDownloadingBatch(null)
+      // Reset progress after a short delay to show the completed state
+      setTimeout(() => {
+        setDownloadProgress(0)
+        setDownloadStatus('')
+      }, 3000)
     }
   }
 
   // Render the collection grid with watermarked images
   const renderCollectionGrid = () => {
-    if (collection?.photos.length === 0) {
+    if (!collection || !collection.photos) {
+      return null;
+    }
+    
+    if (collection.photos.length === 0) {
       return (
         <div className="text-center py-12 bg-gray-50 rounded-lg">
           <p className="text-lg text-gray-600">This collection doesn&apos;t have any photos yet.</p>
@@ -542,7 +599,7 @@ const CollectionPage = () => {
 
     return (
       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
-        {collection?.photos.map((photo, index) => (
+        {collection.photos.map((photo, index) => (
           <Card key={photo.id} className="overflow-hidden group">
             <div 
               className="aspect-square relative cursor-pointer" 
@@ -579,7 +636,7 @@ const CollectionPage = () => {
 
   // Render the lightbox with watermarked image
   const renderLightbox = () => {
-    if (!isLightboxOpen || activePhotoIndex === null || !collection) return null
+    if (!isLightboxOpen || activePhotoIndex === null || !collection || !collection.photos) return null
     
     const activePhoto = collection.photos[activePhotoIndex]
     
@@ -660,186 +717,131 @@ const CollectionPage = () => {
     )
   }
 
-  // Render batch selection dropdown items
-  const renderBatchItems = () => {
-    const items = []
-    
-    for (let i = 1; i <= totalBatches; i++) {
-      const start = (i - 1) * BATCH_SIZE + 1
-      const end = Math.min(i * BATCH_SIZE, collection?.photos?.length || 0)
-      
-      items.push(
-        <DropdownMenuItem 
-          key={i} 
-          onClick={() => {
-            setSelectedBatch(i)
-            handleDownloadCollection(i)
-          }}
-          disabled={isDownloadingCollection}
-        >
-          {downloadingBatch === i.toString() ? (
-            <>
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" /> 
-            </>
-          ) : (
-            <>
-              <Download className="mr-2 h-4 w-4" /> 
-            </>
-          )}
-          Batch {i}: Photos {start}-{end}
-        </DropdownMenuItem>
-      )
-    }
-    
-    return items
-  }
-
-  if (loading) {
-    return (
-      <div className="container mx-auto p-6 flex flex-col items-center justify-center min-h-[60vh]">
-        <Loader2 className="h-12 w-12 animate-spin text-primary mb-4" />
-        <p className="text-lg">Loading collection...</p>
-      </div>
-    )
-  }
-
-  if (!collection) {
-    return (
-      <div className="container mx-auto p-6 flex flex-col items-center justify-center min-h-[60vh]">
-        <p className="text-lg text-red-500">Collection not found</p>
-        <Button asChild className="mt-4">
-          <Link href="/collections">Back to Collections</Link>
-        </Button>
-      </div>
-    )
-  }
-
   return (
-    <div className="container mx-auto p-6 space-y-6">
-      <div className="flex flex-col space-y-6">
-        <div className="flex items-center">
-          <Link href="/collections" className="flex items-center text-gray-600 hover:text-gray-900 mr-4">
-            <ArrowLeft className="h-4 w-4 mr-1" /> Back to Collections
-          </Link>
-        </div>
-        
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-          <div>
-            <h1 className="text-3xl font-bold">{collection.name}</h1>
-            <p className="text-gray-600 mt-2">{collection.description}</p>
-            {collection.user && (
-              <p className="text-sm text-gray-500 mt-1">
-                By {collection.user.firstName} {collection.user.lastName}
-              </p>
-            )}
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <Button 
-              variant="outline" 
-              onClick={handleShare}
-              className="shrink-0"
-              disabled={isSharing}
-            >
-              {isSharing ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Sharing...
-                </>
-              ) : (
-                <>
-                  <Share2 className="mr-2 h-4 w-4" /> Share
-                </>
-              )}
-            </Button>
-            <Button 
-              variant={watermarkConfig ? "default" : "outline"}
-              onClick={handleOpenWatermarkModal}
-              className="shrink-0"
-              disabled={isLoadingWatermarkModal}
-            >
-              {isLoadingWatermarkModal ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Loading...
-                </>
-              ) : (
-                <>
-                  <Stamp className="mr-2 h-4 w-4" /> 
-                  {watermarkConfig ? "Edit Watermark" : "Add Watermark"}
-                </>
-              )}
-            </Button>
-            {watermarkConfig && collection.photos.length > 0 && (
-              totalBatches > 1 ? (
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button 
-                      className="shrink-0"
-                      disabled={isDownloadingCollection}
-                    >
-                      {isDownloadingCollection ? (
-                        <>
-                          <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Downloading...
-                        </>
-                      ) : (
-                        <>
-                          <Download className="mr-2 h-4 w-4" /> Download <ChevronDown className="ml-1 h-4 w-4" />
-                        </>
-                      )}
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
-                    {renderBatchItems()}
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              ) : (
-                <Button 
-                  onClick={() => handleDownloadCollection(1)}
-                  disabled={isDownloadingCollection}
-                  className="shrink-0"
-                >
-                  {isDownloadingCollection ? (
-                    <>
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Downloading...
-                    </>
-                  ) : (
-                    <>
-                      <Download className="mr-2 h-4 w-4" /> Download All
-                    </>
-                  )}
-                </Button>
-              )
-            )}
-          </div>
-        </div>
+    <div className="container mx-auto p-4">
+      <div className="mb-6">
+        <Link href="/collections" className="inline-flex items-center text-blue-600 hover:text-blue-800">
+          <ArrowLeft className="h-4 w-4 mr-2" />
+          Back to Collections
+        </Link>
       </div>
-
-      {renderCollectionGrid()}
-      {renderLightbox()}
-
-      {/* Watermark Editor Modal */}
-      <Dialog open={isWatermarkModalOpen} onOpenChange={setIsWatermarkModalOpen}>
-        <DialogContent className="max-w-6xl w-[95vw]">
-          <DialogHeader>
-            <DialogTitle className="sr-only">Watermark Editor</DialogTitle>
-          </DialogHeader>
-          {isLoadingWatermarks ? (
-            <div className="flex items-center justify-center py-12">
-              <Loader2 className="h-8 w-8 animate-spin text-primary mr-2" />
-              <span>Loading watermarks...</span>
+      
+      {loading ? (
+        <div className="flex justify-center items-center h-64">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        </div>
+      ) : error ? (
+        <div className="text-center py-12 bg-gray-50 rounded-lg">
+          <p className="text-lg text-red-600">{error}</p>
+        </div>
+      ) : collection ? (
+        <>
+          <div className="flex flex-col md:flex-row md:items-center justify-between mb-6">
+            <div>
+              <h1 className="text-3xl font-bold mb-2">{collection.name}</h1>
+              {collection.description && (
+                <p className="text-gray-600 mb-4">{collection.description}</p>
+              )}
+              <p className="text-sm text-gray-500">
+                {collection.user ? 
+                  `By ${collection.user.firstName} ${collection.user.lastName}` : 
+                  'By Unknown User'}
+              </p>
             </div>
-          ) : (
-            <WatermarkEditor
-              collectionId={collection.id}
-              watermarks={watermarks}
-              photoUrl={collection.photos.length > 0 ? collection.photos[0].url : ''}
-              initialConfig={watermarkConfig || undefined}
-              onSave={handleSaveWatermarkConfig}
-              onCancel={() => setIsWatermarkModalOpen(false)}
-            />
+            
+            <div className="flex flex-wrap gap-3 mt-4 md:mt-0">
+              <Button
+                onClick={handleShare}
+                disabled={isSharing}
+                variant="outline"
+                className="flex items-center"
+              >
+                {isSharing ? (
+                  <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                ) : (
+                  <Share2 className="h-4 w-4 mr-2" />
+                )}
+                Share
+              </Button>
+              
+              <Button
+                onClick={handleOpenWatermarkModal}
+                disabled={isLoadingWatermarkModal}
+                variant="outline"
+                className="flex items-center"
+              >
+                {isLoadingWatermarkModal ? (
+                  <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                ) : (
+                  <Stamp className="h-4 w-4 mr-2" />
+                )}
+                {watermarkConfig ? 'Edit Watermark' : 'Add Watermark'}
+              </Button>
+              
+              <Button
+                onClick={handleDownloadCollection}
+                disabled={isDownloadingCollection}
+                className="flex items-center"
+              >
+                {isDownloadingCollection ? (
+                  <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                ) : (
+                  <Download className="h-4 w-4 mr-2" />
+                )}
+                Download All
+              </Button>
+            </div>
+          </div>
+          
+          {/* Download Progress Bar */}
+          {downloadProgress > 0 && (
+            <div className="mb-6 p-4 bg-white border rounded-lg shadow-sm">
+              <div className="flex justify-between mb-1">
+                <span className="text-sm font-medium">{downloadStatus}</span>
+                <span className="text-sm font-medium">{downloadProgress}%</span>
+              </div>
+              <div className="w-full bg-gray-200 rounded-full h-2.5">
+                <div 
+                  className="bg-primary h-2.5 rounded-full transition-all duration-300 ease-in-out" 
+                  style={{ width: `${downloadProgress}%` }}
+                ></div>
+              </div>
+            </div>
           )}
-        </DialogContent>
-      </Dialog>
+          
+          {/* Collection grid */}
+          {renderCollectionGrid()}
+          
+          {/* Lightbox */}
+          {renderLightbox()}
+          
+          {/* Watermark editor modal */}
+          <Dialog open={isWatermarkModalOpen} onOpenChange={setIsWatermarkModalOpen}>
+            <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+              <DialogHeader>
+                <DialogTitle>{watermarkConfig ? 'Edit Watermark' : 'Add Watermark'}</DialogTitle>
+              </DialogHeader>
+              
+              {isLoadingWatermarks ? (
+                <div className="flex justify-center items-center h-64">
+                  <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                </div>
+              ) : (
+                <WatermarkEditor
+                  collectionId={id as string}
+                  watermarks={watermarks}
+                  photoUrl={collection.photos[0]?.url || ''}
+                  initialConfig={watermarkConfig || undefined}
+                  onSave={handleSaveWatermarkConfig}
+                  onCancel={() => setIsWatermarkModalOpen(false)}
+                />
+              )}
+            </DialogContent>
+          </Dialog>
+        </>
+      ) : null}
     </div>
   )
 }
 
-export default CollectionPage 
+export default CollectionPage

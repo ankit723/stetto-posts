@@ -4,7 +4,7 @@ import JSZip from 'jszip'
 import { db } from '@/utils/db'
 import sharp from 'sharp'
 
-export const maxDuration = 60; // Set max duration to 60 seconds (Vercel Hobby plan limit)
+export const maxDuration = 120; // Set max duration to 120 seconds for processing larger collections
 export const dynamic = 'force-dynamic'; // Disable caching for this route
 
 // Set memory limits for Sharp to prevent memory issues
@@ -15,10 +15,10 @@ sharp.concurrency(2); // Process two images at a time for better throughput
 const MAX_INPUT_PIXELS = 100000000; // 1e8
 
 // Maximum number of photos to process in parallel
-const BATCH_SIZE = 3;
+const BATCH_SIZE = 5;
 
 // Maximum number of photos to process in total (to stay within time limits)
-const MAX_PHOTOS_PER_BATCH = 40;
+const MAX_PHOTOS_TO_PROCESS = 500;
 
 interface WatermarkPosition {
   x: number;
@@ -86,7 +86,12 @@ async function processPhoto(
     // Get the filename from the URL
     const photoUrl = new URL(photo.url);
     const pathname = photoUrl.pathname;
-    const filename = pathname.split('/').pop() || `photo-${index + 1}.jpg`;
+    // Add sequence number to the filename for proper ordering
+    const originalFilename = pathname.split('/').pop() || `photo.jpg`;
+    const sequenceNumber = photo.sequence || index + 1;
+    // Format sequence number with leading zeros for proper sorting
+    const paddedSequence = String(sequenceNumber).padStart(4, '0');
+    const filename = `${paddedSequence}_${originalFilename}`;
     
     // Apply the watermark to the photo with optimized settings
     const watermarkedPhoto = await sharp(photoBuffer, { limitInputPixels: MAX_INPUT_PIXELS })
@@ -107,7 +112,8 @@ async function processPhoto(
     return { 
       success: true, 
       id: photo.id, 
-      filename 
+      filename,
+      sequence: sequenceNumber
     };
   } catch (error: unknown) {
     console.error(`Error processing photo ${photo.id}:`, error);
@@ -128,14 +134,6 @@ export async function GET(
   const { id } = await params
   
   try {
-    // Get batch number from URL query parameters
-    const searchParams = request.nextUrl.searchParams;
-    const batchNumber = parseInt(searchParams.get('batch') || '1', 10);
-    const batchSize = parseInt(searchParams.get('size') || String(MAX_PHOTOS_PER_BATCH), 10);
-    
-    // Ensure batch size doesn't exceed maximum
-    const effectiveBatchSize = Math.min(batchSize, MAX_PHOTOS_PER_BATCH);
-    
     // Verify authentication
     const { data: { user }, error: authError } = await supabase.auth.getUser()
 
@@ -152,7 +150,11 @@ export async function GET(
         id
       },
       include: {
-        photos: true
+        photos: {
+          orderBy: {
+            sequence: 'asc' // Order photos by sequence
+          }
+        }
       }
     })
 
@@ -162,33 +164,21 @@ export async function GET(
         { status: 404 }
       )
     }
-
-    // Calculate the total number of batches
-    const totalPhotos = collection.photos.length;
-    const totalBatches = Math.ceil(totalPhotos / effectiveBatchSize);
     
-    // Validate batch number
-    if (batchNumber < 1 || batchNumber > totalBatches) {
-      return NextResponse.json(
-        { error: `Invalid batch number. Available batches: 1-${totalBatches}` },
-        { status: 400 }
-      )
-    }
-    
-    // Get the photos for the requested batch
-    const startIndex = (batchNumber - 1) * effectiveBatchSize;
-    const endIndex = Math.min(startIndex + effectiveBatchSize, totalPhotos);
-    const photosToProcess = collection.photos.slice(startIndex, endIndex);
-
     // Check if collection has photos
-    if (!photosToProcess || photosToProcess.length === 0) {
+    if (!collection.photos || collection.photos.length === 0) {
       return NextResponse.json(
-        { error: 'No photos to process in this batch' },
+        { error: 'No photos to process in this collection' },
         { status: 400 }
       )
     }
 
-    console.log(`Processing batch ${batchNumber}/${totalBatches} (${photosToProcess.length} photos) for collection ${collection.name}`);
+    // Limit the number of photos to process to avoid timeouts
+    const totalPhotos = collection.photos.length;
+    const photosToProcess = collection.photos.slice(0, MAX_PHOTOS_TO_PROCESS);
+    
+    console.log(`Processing ${photosToProcess.length} photos (out of ${totalPhotos} total) for collection ${collection.name}`);
+    console.log(`Photos will be processed in sequence order: ${photosToProcess.map(p => p.sequence).join(', ')}`);
 
     // Get watermark configuration for this collection using Prisma
     const watermarkConfigData = await db.photoConfig.findFirst({
@@ -217,18 +207,12 @@ export async function GET(
     // Add a README file to the zip
     zip.file('README.txt', `Collection: ${collection.name}
 Description: ${collection.description || 'No description'}
-Batch: ${batchNumber} of ${totalBatches}
-Photos in this batch: ${photosToProcess.length}
-Total photos in collection: ${totalPhotos}
+Photos included: ${photosToProcess.length} ${totalPhotos > MAX_PHOTOS_TO_PROCESS ? `(out of ${totalPhotos} total)` : ''}
 Downloaded on: ${new Date().toLocaleString()}
 
 This collection was watermarked with the Photo Watermark app.
-
-To download other batches, use the batch parameter in the URL:
-- Batch 1: ?batch=1 (photos 1-${effectiveBatchSize})
-${totalBatches > 1 ? `- Batch 2: ?batch=2 (photos ${effectiveBatchSize + 1}-${Math.min(effectiveBatchSize * 2, totalPhotos)})` : ''}
-${totalBatches > 2 ? `- Batch 3: ?batch=3 (photos ${effectiveBatchSize * 2 + 1}-${Math.min(effectiveBatchSize * 3, totalPhotos)})` : ''}
-${totalBatches > 3 ? `- And so on up to batch ${totalBatches}` : ''}
+Photos are named with their sequence number to preserve the original order.
+${totalPhotos > MAX_PHOTOS_TO_PROCESS ? `\nNote: This download includes the first ${MAX_PHOTOS_TO_PROCESS} photos out of ${totalPhotos} total photos in the collection due to processing limits.` : ''}
 `)
 
     // Fetch the watermark image once and keep it in memory
@@ -299,15 +283,14 @@ ${totalBatches > 3 ? `- And so on up to batch ${totalBatches}` : ''}
 Processing Report
 ----------------
 Collection: ${collection.name}
-Batch: ${batchNumber} of ${totalBatches}
-Photos in this batch: ${photosToProcess.length} (${startIndex + 1}-${endIndex} of ${totalPhotos})
+Total photos in collection: ${totalPhotos}
+Photos processed: ${photosToProcess.length} ${totalPhotos > MAX_PHOTOS_TO_PROCESS ? `(limited to ${MAX_PHOTOS_TO_PROCESS} out of ${totalPhotos} total)` : ''}
 Successfully processed: ${successful}
 Failed to process: ${failed}
 
+${totalPhotos > MAX_PHOTOS_TO_PROCESS ? `Note: Due to processing limits, only the first ${MAX_PHOTOS_TO_PROCESS} photos were included in this download.\n` : ''}
 ${failed > 0 ? 'Failed items:' : ''}
 ${failed > 0 ? results.filter(r => !r.success).map(item => `- Photo ID: ${item.id}, Error: ${item.error}`).join('\n') : ''}
-
-To download other batches, append ?batch=X to the URL where X is the batch number (1-${totalBatches}).
 `;
 
     zip.file('processing_report.txt', reportContent);
@@ -327,7 +310,7 @@ To download other batches, append ?batch=X to the URL where X is the batch numbe
     const arrayBuffer = await zipBlob.arrayBuffer();
     
     // Return the zip file as a downloadable response
-    const fileName = `${collection.name.replace(/[^a-z0-9]/gi, '_').toLowerCase()}_batch${batchNumber}_watermarked.zip`;
+    const fileName = `${collection.name.replace(/[^a-z0-9]/gi, '_').toLowerCase()}_watermarked.zip`;
     
     return new NextResponse(arrayBuffer, {
       headers: {

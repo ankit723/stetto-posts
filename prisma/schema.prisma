@@ -45,6 +45,7 @@ model PhotoConfig {
 model Photo {
   id        String   @id @default(uuid())
   url       String
+  sequence   Int      @default(0) // Added sequence field for ordering
   isWatermark Boolean @default(false)
   userId    String?
   user      User?    @relation(fields: [userId], references: [id])

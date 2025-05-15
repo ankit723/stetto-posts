@@ -8,7 +8,11 @@ export async function GET() {
     const collections = await executeWithRetry(() => 
       db.collection.findMany({
         include: {
-          photos: true,
+          photos: {
+            orderBy: {
+              sequence: 'asc' // Order photos by sequence
+            }
+          },
           user: {
             select: {
               id: true,
@@ -66,21 +70,25 @@ export async function POST(request: Request) {
           for (let i = 0; i < images.length; i += INTERNAL_BATCH_SIZE) {
             const batch = images.slice(i, i + INTERNAL_BATCH_SIZE)
             
-            // Create photos in batch using Promise.all for better performance
-            await Promise.all(
-              batch.map(url => 
-                prisma.photo.create({
-                  data: {
-                    url,
-                    collections: {
-                      connect: {
-                        id: collection.id,
-                      },
+            // Create photos in sequence
+            for (let j = 0; j < batch.length; j++) {
+              const url = batch[j]
+              // Sequence starts at 1 and increases for each image
+              // This ensures that the sequence matches the order in which images were selected
+              const sequence = i + j + 1
+              console.log(`Creating photo with sequence ${sequence} for URL: ${url.substring(0, 30)}...`)
+              await prisma.photo.create({
+                data: {
+                  url,
+                  sequence: sequence, // Set sequence based on position in the array
+                  collections: {
+                    connect: {
+                      id: collection.id,
                     },
                   },
-                })
-              )
-            );
+                },
+              })
+            }
           }
         }
 
@@ -89,6 +97,9 @@ export async function POST(request: Request) {
           where: { id: collection.id },
           include: { 
             photos: {
+              orderBy: {
+                sequence: 'asc' // Order photos by sequence
+              },
               take: 100 // Limit the number of photos returned to avoid payload size issues
             }
           },

@@ -50,6 +50,7 @@ interface PreviewImage {
   id: string
   file: File
   preview: string
+  originalIndex: number
 }
 
 // Add a new component for collection thumbnails
@@ -179,7 +180,7 @@ const CollectionsPage = () => {
   const MAX_RETRIES = 3              // Reasonable retry attempts
   const RETRY_DELAY = 1000           // Base delay before retry (ms)
   
-  const MAX_IMAGES = 50 // Maximum number of images allowed per collection
+  const MAX_IMAGES = 500 // Maximum number of images allowed per collection
   
   const supabase = createClient()
   const router = useRouter()
@@ -250,27 +251,43 @@ const CollectionsPage = () => {
       toast.warning(`Only added ${filesToAdd.length} images. Maximum of ${MAX_IMAGES} new images allowed.`)
     }
     
+    // Immediately assign sequence numbers to preserve original selection order
+    // This happens before any async operations that could change the order
+    const filesWithOrder = filesToAdd.map((file, index) => {
+      // Store the original order directly on the file object using a custom property
+      const fileWithOrder = Object.assign(file, { 
+        originalOrder: selectedFiles.length + index 
+      })
+      return fileWithOrder
+    })
+    
+    console.log('Original file order:', filesWithOrder.map((f, i) => 
+      `[${i}] ${f.name} (order=${(f as any).originalOrder})`
+    ))
+    
     // Show loading state while compressing images
     setIsImageLoading(prev => {
       const newState = {...prev}
-      filesToAdd.forEach(file => {
+      filesWithOrder.forEach(file => {
         const id = Math.random().toString(36).substring(2)
         newState[id] = true
       })
       return newState
     })
     
-    // Process files in parallel with compression
+    // Process files in parallel with compression while preserving original order
     const processedFiles: File[] = []
     const newPreviews: PreviewImage[] = []
     
-    await Promise.all(filesToAdd.map(async (file) => {
+    await Promise.all(filesWithOrder.map(async (file) => {
       try {
         // Generate a unique ID for this image
         const id = Math.random().toString(36).substring(2)
         
         // Compress the image using adaptive compression
         const compressedFile = await compressImageToFile(file)
+        // Transfer the originalOrder property to the compressed file
+        Object.assign(compressedFile, { originalOrder: (file as any).originalOrder })
         
         // Add to processed files
         processedFiles.push(compressedFile)
@@ -285,17 +302,26 @@ const CollectionsPage = () => {
         }
         imgElement.src = preview
         
-        // Add to preview images
+        // Add to preview images with the correct index to maintain order
         newPreviews.push({
           id,
           file: compressedFile,
           preview,
+          originalIndex: (file as any).originalOrder // Use the original order we stored
         })
       } catch (error) {
         console.error('Error compressing image:', error)
         toast.error('Failed to process image. Please try again.')
       }
     }))
+    
+    // Sort the processed files and previews by originalOrder before updating state
+    processedFiles.sort((a, b) => (a as any).originalOrder - (b as any).originalOrder)
+    newPreviews.sort((a, b) => a.originalIndex - b.originalIndex)
+    
+    console.log('Processed files order:', processedFiles.map((f, i) => 
+      `[${i}] ${f.name} (order=${(f as any).originalOrder})`
+    ))
     
     // Update state with processed files
     setSelectedFiles((prevFiles) => [...prevFiles, ...processedFiles])
@@ -324,27 +350,43 @@ const CollectionsPage = () => {
         toast.warning(`Only added ${filesToAdd.length} images. Maximum of ${MAX_IMAGES} new images allowed.`)
       }
       
+      // Immediately assign sequence numbers to preserve original selection order
+      // This happens before any async operations that could change the order
+      const filesWithOrder = filesToAdd.map((file, index) => {
+        // Store the original order directly on the file object using a custom property
+        const fileWithOrder = Object.assign(file, { 
+          originalOrder: selectedFiles.length + index 
+        })
+        return fileWithOrder
+      })
+      
+      console.log('Original dropped file order:', filesWithOrder.map((f, i) => 
+        `[${i}] ${f.name} (order=${(f as any).originalOrder})`
+      ))
+      
       // Show loading state while compressing images
       setIsImageLoading(prev => {
         const newState = {...prev}
-        filesToAdd.forEach(file => {
+        filesWithOrder.forEach(file => {
           const id = Math.random().toString(36).substring(2)
           newState[id] = true
         })
         return newState
       })
       
-      // Process files in parallel with compression
+      // Process files in parallel with compression while preserving original order
       const processedFiles: File[] = []
       const newPreviews: PreviewImage[] = []
       
-      await Promise.all(filesToAdd.map(async (file) => {
+      await Promise.all(filesWithOrder.map(async (file) => {
         try {
           // Generate a unique ID for this image
           const id = Math.random().toString(36).substring(2)
           
           // Compress the image using adaptive compression
           const compressedFile = await compressImageToFile(file)
+          // Transfer the originalOrder property to the compressed file
+          Object.assign(compressedFile, { originalOrder: (file as any).originalOrder })
           
           // Add to processed files
           processedFiles.push(compressedFile)
@@ -359,17 +401,26 @@ const CollectionsPage = () => {
           }
           imgElement.src = preview
           
-          // Add to preview images
+          // Add to preview images with the correct index to maintain order
           newPreviews.push({
             id,
             file: compressedFile,
             preview,
+            originalIndex: (file as any).originalOrder // Use the original order we stored
           })
         } catch (error) {
           console.error('Error compressing image:', error)
           toast.error('Failed to process image. Please try again.')
         }
       }))
+      
+      // Sort the processed files and previews by originalOrder before updating state
+      processedFiles.sort((a, b) => (a as any).originalOrder - (b as any).originalOrder)
+      newPreviews.sort((a, b) => a.originalIndex - b.originalIndex)
+      
+      console.log('Processed dropped files order:', processedFiles.map((f, i) => 
+        `[${i}] ${f.name} (order=${(f as any).originalOrder})`
+      ))
       
       // Update state with processed files
       setSelectedFiles((prevFiles) => [...prevFiles, ...processedFiles])
@@ -378,19 +429,42 @@ const CollectionsPage = () => {
   }
 
   const removeImage = (id: string) => {
-    setPreviewImages((prevPreviews) => prevPreviews.filter((image) => image.id !== id))
-    // Also remove from selectedFiles
+    // Find the image to remove
     const imageToRemove = previewImages.find((image) => image.id === id)
-    if (imageToRemove) {
-      setSelectedFiles((prevFiles) => 
-        prevFiles.filter((file) => file !== imageToRemove.file)
-      )
-    }
+    if (!imageToRemove) return
+    
+    // Get its original index
+    const removedIndex = imageToRemove.originalIndex
+    
+    // Remove from previewImages
+    setPreviewImages((prevPreviews) => {
+      // First filter out the removed image
+      const filteredPreviews = prevPreviews.filter((image) => image.id !== id)
+      
+      // Then adjust indices for images that came after the removed one
+      return filteredPreviews.map(image => {
+        if (image.originalIndex > removedIndex) {
+          return { ...image, originalIndex: image.originalIndex - 1 }
+        }
+        return image
+      })
+    })
+    
+    // Also remove from selectedFiles
+    setSelectedFiles((prevFiles) => 
+      prevFiles.filter((file) => file !== imageToRemove.file)
+    )
   }
 
   const removeExistingPhoto = (photoId: string) => {
+    // Remove from existingPhotos
     setExistingPhotos((prev) => prev.filter((photo) => photo.id !== photoId))
+    
+    // Add to photosToDelete
     setPhotosToDelete((prev) => [...prev, photoId])
+    
+    // No need to adjust originalIndex values for new images since
+    // existing photos are separate from newly added photos
   }
 
   const handleCreateCollection = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -444,8 +518,15 @@ const CollectionsPage = () => {
       const totalFiles = filesToProcess.length
       let processedFiles = 0
       
-      // Prepare all file names and paths in advance
-      const fileInfos = filesToProcess.map(file => {
+      console.log('Selected files order:', selectedFiles.map((file, idx) => 
+        `[${idx}] ${file.name} (order=${(file as any).originalOrder || 'unknown'})`
+      ))
+      console.log('Preview images order:', previewImages.map(img => 
+        `[${img.originalIndex}] ${img.file.name}`
+      ))
+      
+      // Prepare all file names and paths in advance - maintain original order
+      const fileInfos = filesToProcess.map((file, index) => {
         const fileExt = file.name.split('.').pop()
         const fileName = `${Math.random().toString(36).substring(2)}.${fileExt}`
         return {
@@ -453,14 +534,23 @@ const CollectionsPage = () => {
           fileName,
           filePath: `collections/${collectionId}/${fileName}`,
           processed: false,
-          url: null as string | null
+          url: null as string | null,
+          originalIndex: (file as any).originalOrder || index // Use stored originalOrder if available
         }
       })
+      
+      // Sort fileInfos by originalIndex to ensure correct order
+      fileInfos.sort((a, b) => a.originalIndex - b.originalIndex)
+      
       console.timeEnd('Image Preprocessing')
+      
+      console.log('File infos created with indices:', fileInfos.map(info => 
+        `[${info.originalIndex}] ${info.file.name}`
+      ))
       
       // 3. Process uploads in smaller batches for better reliability
       console.time('Storage Uploads')
-      const allImageUrls: string[] = []
+      const allImageUrls: Array<{url: string, originalIndex: number}> = []
       
       // Function to upload with retry mechanism and optimizations
       const uploadFileWithRetry = async (fileInfo: typeof fileInfos[0], retryCount = 0): Promise<string | null> => {
@@ -495,6 +585,9 @@ const CollectionsPage = () => {
         // Get current batch
         const currentBatch = fileInfos.slice(i, i + STORAGE_BATCH_SIZE)
         
+        console.log(`Processing batch ${i / STORAGE_BATCH_SIZE + 1} with indices:`, 
+          currentBatch.map(info => `${info.originalIndex}: ${info.file.name}`))
+        
         // Process batch in parallel
         const batchPromises = currentBatch.map(fileInfo => uploadFileWithRetry(fileInfo))
         const batchResults = await Promise.all(batchPromises)
@@ -504,7 +597,11 @@ const CollectionsPage = () => {
           if (url) {
             currentBatch[index].url = url
             currentBatch[index].processed = true
-            allImageUrls.push(url)
+            allImageUrls.push({
+              url,
+              originalIndex: currentBatch[index].originalIndex
+            })
+            console.log(`Uploaded file ${currentBatch[index].file.name} with index ${currentBatch[index].originalIndex}`)
           }
         })
         
@@ -523,6 +620,12 @@ const CollectionsPage = () => {
       console.time('Database Updates')
       if (allImageUrls.length > 0) {
         try {
+          // Sort by original index to maintain upload order
+          allImageUrls.sort((a, b) => a.originalIndex - b.originalIndex)
+          
+          console.log('Sorted image URLs for API call:', 
+            allImageUrls.map(item => `${item.originalIndex}: ${item.url.substring(0, 30)}...`))
+          
           // Send all images in a single API call
           const response = await fetch(`/api/collections/${collectionId}/photos`, {
             method: 'POST',
@@ -530,7 +633,7 @@ const CollectionsPage = () => {
               'Content-Type': 'application/json',
             },
             body: JSON.stringify({
-              images: allImageUrls,
+              images: allImageUrls.map(item => item.url),
             }),
           });
           
@@ -557,7 +660,7 @@ const CollectionsPage = () => {
         ...prev, 
         { 
           ...newCollection, 
-          photos: allImageUrls.map(url => ({ id: Math.random().toString(), url })),
+          photos: allImageUrls.map(item => ({ id: Math.random().toString(), url: item.url })),
           hasWatermark: false 
         }
       ])
@@ -749,7 +852,7 @@ const CollectionsPage = () => {
         let processedFiles = 0
         
         // Prepare all file names and paths in advance
-        const fileInfos = filesToProcess.map(file => {
+        const fileInfos = filesToProcess.map((file, index) => {
           const fileExt = file.name.split('.').pop()
           const fileName = `${Math.random().toString(36).substring(2)}.${fileExt}`
           return {
@@ -757,14 +860,23 @@ const CollectionsPage = () => {
             fileName,
             filePath: `collections/${editCollectionId}/${fileName}`,
             processed: false,
-            url: null as string | null
+            url: null as string | null,
+            originalIndex: (file as any).originalOrder || index // Use stored originalOrder if available
           }
         })
+        
+        // Sort fileInfos by originalIndex to ensure correct order
+        fileInfos.sort((a, b) => a.originalIndex - b.originalIndex)
+        
+        console.log('Edit mode - file infos created with indices:', fileInfos.map(info => 
+          `[${info.originalIndex}] ${info.file.name}`
+        ))
+        
         console.timeEnd('Image Preprocessing')
         
         // 3. Process uploads in smaller batches for better reliability
         console.time('Storage Uploads')
-        const allImageUrls: string[] = []
+        const allImageUrls: Array<{url: string, originalIndex: number}> = []
         
         // Function to upload with retry mechanism and optimizations
         const uploadFileWithRetry = async (fileInfo: typeof fileInfos[0], retryCount = 0): Promise<string | null> => {
@@ -808,7 +920,7 @@ const CollectionsPage = () => {
             if (url) {
               currentBatch[index].url = url
               currentBatch[index].processed = true
-              allImageUrls.push(url)
+              allImageUrls.push({ url, originalIndex: currentBatch[index].originalIndex })
             }
           })
           
@@ -827,6 +939,12 @@ const CollectionsPage = () => {
         console.time('Database Updates')
         if (allImageUrls.length > 0) {
           try {
+            // Sort by original index to maintain upload order
+            allImageUrls.sort((a, b) => a.originalIndex - b.originalIndex)
+            
+            console.log('Sorted image URLs for API call:', 
+              allImageUrls.map(item => `${item.originalIndex}: ${item.url.substring(0, 30)}...`))
+            
             // Send all new images in a single API call
             const response = await fetch(`/api/collections/${editCollectionId}/photos`, {
               method: 'POST',
@@ -834,7 +952,7 @@ const CollectionsPage = () => {
                 'Content-Type': 'application/json',
               },
               body: JSON.stringify({
-                images: allImageUrls,
+                images: allImageUrls.map(item => item.url),
               }),
             });
             
@@ -864,9 +982,9 @@ const CollectionsPage = () => {
               !photosToDelete.includes(photo.id)
             )
             
-            const newPhotosList = allImageUrls.map(url => ({ 
+            const newPhotosList = allImageUrls.map(item => ({ 
               id: Math.random().toString(), 
-              url 
+              url: item.url 
             }))
             
             return { 
@@ -1183,7 +1301,7 @@ const CollectionsPage = () => {
                       setSelectedFiles([]);
                       setPreviewImages([]);
                     }}
-                    className="text-red-500 hover:text-red-700"
+                    className="text-white"
                   >
                     Clear all
                   </Button>
@@ -1195,7 +1313,9 @@ const CollectionsPage = () => {
                 <div className="mt-4">
                   <h3 className="text-sm font-medium mb-2">Images to Add</h3>
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                    {previewImages.map((image) => (
+                    {previewImages
+                      .sort((a, b) => a.originalIndex - b.originalIndex)
+                      .map((image) => (
                       <div key={image.id} className="relative group">
                         <div className="h-24 w-24 rounded-md overflow-hidden relative">
                           <Image
@@ -1367,7 +1487,9 @@ const CollectionsPage = () => {
                   <div className="mt-4">
                     <h3 className="text-sm font-medium mb-2">New Photos to Add</h3>
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                      {previewImages.map((image) => (
+                      {previewImages
+                        .sort((a, b) => a.originalIndex - b.originalIndex)
+                        .map((image) => (
                         <div key={image.id} className="relative group">
                           <div className="h-24 w-24 rounded-md overflow-hidden relative">
                             <Image
