@@ -737,7 +737,7 @@ ${totalPhotos > 500 ? `\nNote: This download includes the first 500 photos out o
       <div className="mb-6">
         <Link href="/collections" className="inline-flex items-center text-blue-600 hover:text-blue-800">
           <ArrowLeft className="h-4 w-4 mr-2" />
-          Back to Collections
+          Back to Collections 
         </Link>
       </div>
       
@@ -753,26 +753,13 @@ ${totalPhotos > 500 ? `\nNote: This download includes the first 500 photos out o
         <>
           <div className="flex flex-col md:flex-row md:items-center justify-between mb-6">
             <div>
-              <h1 className="text-3xl font-bold mb-2">{collection.name}</h1>
+              <h1 className="text-3xl font-bold mb-2">{collection.name} <span className="text-sm text-gray-500">({collection.photos.length} photos)</span></h1>
               {collection.description && (
                 <p className="text-gray-600 mb-4">{collection.description}</p>
               )}
             </div>
             
             <div className="flex flex-wrap gap-3 mt-4 md:mt-0">
-              <Button
-                onClick={handleShare}
-                disabled={isSharing}
-                variant="outline"
-                className="flex items-center"
-              >
-                {isSharing ? (
-                  <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                ) : (
-                  <Share2 className="h-4 w-4 mr-2" />
-                )}
-                Share
-              </Button>
               
               <Button
                 onClick={handleOpenWatermarkModal}

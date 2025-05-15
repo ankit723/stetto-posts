@@ -1445,7 +1445,7 @@ const CollectionsPage = () => {
                         setSelectedFiles([]);
                         setPreviewImages([]);
                       }}
-                      className="text-red-500 hover:text-red-700"
+                      className="text-white"
                     >
                       Clear new images
                     </Button>
