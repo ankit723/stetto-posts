@@ -514,7 +514,7 @@ const CollectionsPage = () => {
       
       // 2. Preprocess images before upload (in parallel)
       console.time('Image Preprocessing')
-      const filesToProcess = selectedFiles.slice(0, 50) // Enforce 50 image limit
+      const filesToProcess = selectedFiles.slice(0, 20) // Enforce 50 image limit
       const totalFiles = filesToProcess.length
       let processedFiles = 0
       
@@ -847,7 +847,7 @@ const CollectionsPage = () => {
       if (selectedFiles.length > 0) {
         // 2. Preprocess images before upload (in parallel)
         console.time('Image Preprocessing')
-        const filesToProcess = selectedFiles.slice(0, 50) // Enforce 50 image limit
+        const filesToProcess = selectedFiles.slice(0, 20) // Enforce 50 image limit
         const totalFiles = filesToProcess.length
         let processedFiles = 0
         
