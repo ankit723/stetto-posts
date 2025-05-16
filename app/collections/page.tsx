@@ -180,7 +180,7 @@ const CollectionsPage = () => {
   const MAX_RETRIES = 3              // Reasonable retry attempts
   const RETRY_DELAY = 1000           // Base delay before retry (ms)
   
-  const MAX_IMAGES = 500 // Maximum number of images allowed per collection
+  const MAX_IMAGES = 20 // Maximum number of images allowed per collection
   
   const supabase = createClient()
   const router = useRouter()
@@ -514,7 +514,7 @@ const CollectionsPage = () => {
       
       // 2. Preprocess images before upload (in parallel)
       console.time('Image Preprocessing')
-      const filesToProcess = selectedFiles.slice(0, 20) // Enforce 50 image limit
+      const filesToProcess = selectedFiles.slice(0, 20) // Enforce 20 image limit
       const totalFiles = filesToProcess.length
       let processedFiles = 0
       
@@ -847,7 +847,7 @@ const CollectionsPage = () => {
       if (selectedFiles.length > 0) {
         // 2. Preprocess images before upload (in parallel)
         console.time('Image Preprocessing')
-        const filesToProcess = selectedFiles.slice(0, 20) // Enforce 50 image limit
+        const filesToProcess = selectedFiles.slice(0, 20) // Enforce 20 image limit
         const totalFiles = filesToProcess.length
         let processedFiles = 0
         
@@ -1293,7 +1293,7 @@ const CollectionsPage = () => {
               
               {/* Image count indicator */}
               <div className="flex justify-between text-sm text-gray-500">
-                <span><span className="font-medium">{selectedFiles.length}</span> of 50 images selected</span>
+                <span><span className="font-medium">{selectedFiles.length}</span> of 20 images selected</span>
                 {selectedFiles.length > 0 && (
                   <Button 
                     type="button" 
@@ -1435,7 +1435,7 @@ const CollectionsPage = () => {
                 {/* Image count indicator */}
                 <div className="flex justify-between text-sm text-gray-500">
                   <span>
-                    <span className="font-medium">{selectedFiles.length}</span> of 50 new images selected
+                    <span className="font-medium">{selectedFiles.length}</span> of 20 new images selected
                     {existingPhotos.length > 0 && ` (${existingPhotos.length} existing)`}
                   </span>
                   {selectedFiles.length > 0 && (
