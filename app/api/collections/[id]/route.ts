@@ -54,7 +54,6 @@ export async function GET(
           orderBy: {
             sequence: 'asc' // Order photos by sequence
           },
-          take: 200 // Limit the number of photos returned to avoid payload size issues
         }
       }
     })

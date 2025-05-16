@@ -25,7 +25,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { createClient } from '@/utils/supabase/client'
 import { isUserAdmin } from '../auth/actions'
 import Image from 'next/image'
-import { compressImageToFile } from '@/utils/imageCompression'
+// import { compressImageToFile } from '@/utils/imageCompression'
 import { useRouter } from 'next/navigation'
 import { Checkbox } from '@/components/ui/checkbox'
 
@@ -174,13 +174,15 @@ const CollectionsPage = () => {
   const [selectMode, setSelectMode] = useState(false)
   const [isBatchDeleting, setIsBatchDeleting] = useState(false)
   const [isBatchDeleteDialogOpen, setIsBatchDeleteDialogOpen] = useState(false)
+  // New state for tracking overall image processing
+  const [isProcessingImages, setIsProcessingImages] = useState(false)
   
   // Constants for upload configuration
   const STORAGE_BATCH_SIZE = 10      // Smaller batches for better reliability
   const MAX_RETRIES = 3              // Reasonable retry attempts
   const RETRY_DELAY = 1000           // Base delay before retry (ms)
   
-  const MAX_IMAGES = 20 // Maximum number of images allowed per collection
+  const MAX_IMAGES = 50 // Maximum number of images allowed per collection
   
   const supabase = createClient()
   const router = useRouter()
@@ -243,6 +245,9 @@ const CollectionsPage = () => {
     
     const files = Array.from(e.target.files)
     
+    // Show processing state
+    setIsProcessingImages(true)
+    
     // Limit the number of files to add
     const filesToAdd = files.slice(0, MAX_IMAGES - selectedFiles.length)
     
@@ -285,7 +290,8 @@ const CollectionsPage = () => {
         const id = Math.random().toString(36).substring(2)
         
         // Compress the image using adaptive compression
-        const compressedFile = await compressImageToFile(file)
+        // const compressedFile = await compressImageToFile(file)
+        const compressedFile = file
         // Transfer the originalOrder property to the compressed file
         Object.assign(compressedFile, { originalOrder: (file as any).originalOrder })
         
@@ -326,6 +332,9 @@ const CollectionsPage = () => {
     // Update state with processed files
     setSelectedFiles((prevFiles) => [...prevFiles, ...processedFiles])
     setPreviewImages((prevPreviews) => [...prevPreviews, ...newPreviews])
+    
+    // Processing complete
+    setIsProcessingImages(false)
   }
 
   const handleDrop = async (e: React.DragEvent<HTMLDivElement>) => {
@@ -333,6 +342,9 @@ const CollectionsPage = () => {
     
     if (e.dataTransfer.files) {
       const files = Array.from(e.dataTransfer.files)
+      
+      // Show processing state
+      setIsProcessingImages(true)
       
       // Filter for only image files
       const imageFiles = files.filter(file => file.type.startsWith('image/'))
@@ -384,7 +396,8 @@ const CollectionsPage = () => {
           const id = Math.random().toString(36).substring(2)
           
           // Compress the image using adaptive compression
-          const compressedFile = await compressImageToFile(file)
+          // const compressedFile = await compressImageToFile(file)
+          const compressedFile = file
           // Transfer the originalOrder property to the compressed file
           Object.assign(compressedFile, { originalOrder: (file as any).originalOrder })
           
@@ -425,6 +438,9 @@ const CollectionsPage = () => {
       // Update state with processed files
       setSelectedFiles((prevFiles) => [...prevFiles, ...processedFiles])
       setPreviewImages((prevPreviews) => [...prevPreviews, ...newPreviews])
+      
+      // Processing complete
+      setIsProcessingImages(false)
     }
   }
 
@@ -514,7 +530,7 @@ const CollectionsPage = () => {
       
       // 2. Preprocess images before upload (in parallel)
       console.time('Image Preprocessing')
-      const filesToProcess = selectedFiles.slice(0, 20) // Enforce 20 image limit
+      const filesToProcess = selectedFiles.slice(0, 50) // Enforce 50 image limit
       const totalFiles = filesToProcess.length
       let processedFiles = 0
       
@@ -847,7 +863,7 @@ const CollectionsPage = () => {
       if (selectedFiles.length > 0) {
         // 2. Preprocess images before upload (in parallel)
         console.time('Image Preprocessing')
-        const filesToProcess = selectedFiles.slice(0, 20) // Enforce 20 image limit
+        const filesToProcess = selectedFiles.slice(0, 50) // Enforce 50 image limit
         const totalFiles = filesToProcess.length
         let processedFiles = 0
         
@@ -1288,12 +1304,12 @@ const CollectionsPage = () => {
                 multiple
                 onChange={handleFileChange}
                 className="mb-2"
-                disabled={isCreating}
+                disabled={isCreating || isProcessingImages}
               />
               
               {/* Image count indicator */}
               <div className="flex justify-between text-sm text-gray-500">
-                <span><span className="font-medium">{selectedFiles.length}</span> of 20 images selected</span>
+                <span><span className="font-medium">{selectedFiles.length}</span> of 50 images selected</span>
                 {selectedFiles.length > 0 && (
                   <Button 
                     type="button" 
@@ -1302,11 +1318,20 @@ const CollectionsPage = () => {
                       setPreviewImages([]);
                     }}
                     className="text-white"
+                    disabled={isProcessingImages}
                   >
                     Clear all
                   </Button>
                 )}
               </div>
+              
+              {/* Processing loader */}
+              {isProcessingImages && (
+                <div className="flex flex-col items-center justify-center py-6 my-4 bg-gray-50 rounded-md">
+                  <Loader2 className="h-8 w-8 animate-spin text-primary mb-2" />
+                  <p className="text-sm text-gray-600">Processing images...</p>
+                </div>
+              )}
               
               {/* Image previews */}
               {previewImages.length > 0 && (
@@ -1429,13 +1454,13 @@ const CollectionsPage = () => {
                   multiple
                   onChange={handleFileChange}
                   className="mb-2"
-                  disabled={isEditing}
+                  disabled={isEditing || isProcessingImages}
                 />
                 
                 {/* Image count indicator */}
                 <div className="flex justify-between text-sm text-gray-500">
                   <span>
-                    <span className="font-medium">{selectedFiles.length}</span> of 20 new images selected
+                    <span className="font-medium">{selectedFiles.length}</span> of 50 new images selected
                     {existingPhotos.length > 0 && ` (${existingPhotos.length} existing)`}
                   </span>
                   {selectedFiles.length > 0 && (
@@ -1446,11 +1471,20 @@ const CollectionsPage = () => {
                         setPreviewImages([]);
                       }}
                       className="text-white"
+                      disabled={isProcessingImages}
                     >
                       Clear new images
                     </Button>
                   )}
                 </div>
+                
+                {/* Processing loader */}
+                {isProcessingImages && (
+                  <div className="flex flex-col items-center justify-center py-6 my-4 bg-gray-50 rounded-md">
+                    <Loader2 className="h-8 w-8 animate-spin text-primary mb-2" />
+                    <p className="text-sm text-gray-600">Processing images...</p>
+                  </div>
+                )}
                 
                 {/* Existing Photos */}
                 {existingPhotos.length > 0 && (
