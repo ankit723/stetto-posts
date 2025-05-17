@@ -544,7 +544,8 @@ const CollectionsPage = () => {
       // Prepare all file names and paths in advance - maintain original order
       const fileInfos = filesToProcess.map((file, index) => {
         const fileExt = file.name.split('.').pop()
-        const fileName = `${Math.random().toString(36).substring(2)}.${fileExt}`
+        const nameWithoutExt = file.name.replace(/\.[^/.]+$/, ""); // removes last extension
+        const fileName = `${nameWithoutExt}-${Math.random().toString(36).substring(2)}.${fileExt}`;
         return {
           file,
           fileName,

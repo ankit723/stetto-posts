@@ -31,7 +31,7 @@ interface WatermarkEditorProps {
   watermarks: Watermark[]
   photoUrl: string
   initialConfig?: WatermarkConfig
-  onSave: (config: WatermarkConfig) => void
+  onSave: (config: WatermarkConfig) => Promise<void>
   onCancel: () => void
 }
 
@@ -64,6 +64,7 @@ const WatermarkEditor = ({
   const [dimensions, setDimensions] = useState<{ width: number, height: number }>(initialConfig?.dimensions || { width: 200, height: 200 })
   const [rotation, setRotation] = useState<number>(initialConfig?.rotation || 0)
   const [loading, setLoading] = useState<boolean>(false)
+  const loadingRef = useRef<boolean>(false)
   const [photoSize, setPhotoSize] = useState<{ width: number, height: number }>({ width: 0, height: 0 })
   const [stageSize, setStageSize] = useState<{ width: number, height: number }>({ width: 0, height: 0 })
   const [displayScale, setDisplayScale] = useState<number>(1)
@@ -80,6 +81,9 @@ const WatermarkEditor = ({
   // State for Konva images
   const [photoNode, setPhotoNode] = useState<HTMLImageElement | null>(null)
   const [watermarkNode, setWatermarkNode] = useState<HTMLImageElement | null>(null)
+  
+  // Add a state to track if the button is being processed
+  const [isProcessing, setIsProcessing] = useState<boolean>(false)
   
   // Function to force update the transformer
   const updateTransformer = () => {
@@ -124,14 +128,35 @@ const WatermarkEditor = ({
         image.src = selectedWatermark.url
         image.onload = () => {
           setWatermarkNode(image)
-          setOriginalAspectRatio(image.naturalWidth / image.naturalHeight)
+          const aspectRatio = image.naturalWidth / image.naturalHeight
+          setOriginalAspectRatio(aspectRatio)
+          
+          // If no initial config or different watermark selected, adjust dimensions based on aspect ratio
+          if (!initialConfig || initialConfig.watermarkId !== selectedWatermarkId) {
+            // Start with a default width
+            const defaultWidth = 200
+            // Calculate height based on the original aspect ratio
+            const calculatedHeight = defaultWidth / aspectRatio
+            
+            setDimensions({
+              width: defaultWidth,
+              height: calculatedHeight
+            })
+            
+            // Center watermark on the photo
+            setPosition({
+              x: photoSize.width / 2,
+              y: photoSize.height / 2
+            })
+            setRotation(0)
+          }
           
           // Force update transformer after a small delay
           setTimeout(updateTransformer, 100)
         }
       }
     }
-  }, [selectedWatermarkId, watermarks])
+  }, [selectedWatermarkId, watermarks, initialConfig, photoSize.width, photoSize.height])
   
   // Update stage size and calculate display scale when container size changes
   useEffect(() => {
@@ -169,15 +194,8 @@ const WatermarkEditor = ({
   // Center the watermark when first selected or when changing watermarks
   useEffect(() => {
     if (selectedWatermarkId && photoSize.width > 0 && photoSize.height > 0) {
-      // If no initial config, center the watermark
-      if (!initialConfig || initialConfig.watermarkId !== selectedWatermarkId) {
-        setPosition({
-          x: photoSize.width / 2,
-          y: photoSize.height / 2
-        })
-        setRotation(0)
-        setDimensions({ width: 200, height: 200 })
-      } else if (initialConfig && initialConfig.watermarkId === selectedWatermarkId) {
+      // If we have an initial config for the selected watermark, use it
+      if (initialConfig && initialConfig.watermarkId === selectedWatermarkId) {
         // Ensure we properly set the position and dimensions for editing
         const adjustedPosition = {
           x: initialConfig.position.x + (initialConfig.dimensions.width / 2),
@@ -187,6 +205,7 @@ const WatermarkEditor = ({
         setDimensions(initialConfig.dimensions)
         setRotation(initialConfig.rotation)
       }
+      // Otherwise the dimensions and position are set in the image.onload handler
     }
   }, [selectedWatermarkId, photoSize, initialConfig])
   
@@ -206,28 +225,66 @@ const WatermarkEditor = ({
     }
   }, [position, dimensions, rotation])
   
-  const handleSave = () => {
+  // Function to update both the state and ref for loading
+  const setLoadingState = (isLoading: boolean) => {
+    setLoading(isLoading)
+    loadingRef.current = isLoading
+  }
+  
+  const handleSave = async () => {
     if (!selectedWatermarkId) {
       toast.error('Please select a watermark')
       return
     }
     
-    // Calculate the position in the original photo coordinates
-    // Since we're working with the actual image dimensions now,
-    // we just need to adjust for the centered rotation point
-    const adjustedPosition = {
-      x: position.x - dimensions.width / 2,
-      y: position.y - dimensions.height / 2
-    }
+    // Set loading state to true
+    setLoadingState(true)
     
-    const config: WatermarkConfig = {
-      watermarkId: selectedWatermarkId,
-      position: adjustedPosition,
-      dimensions,
-      rotation
+    try {
+      // Calculate the position in the original photo coordinates
+      // Since we're working with the actual image dimensions now,
+      // we just need to adjust for the centered rotation point
+      const adjustedPosition = {
+        x: position.x - dimensions.width / 2,
+        y: position.y - dimensions.height / 2
+      }
+      
+      const config: WatermarkConfig = {
+        watermarkId: selectedWatermarkId,
+        position: adjustedPosition,
+        dimensions,
+        rotation
+      }
+      
+      // Add a slight delay to ensure loading state is applied in the UI
+      // This helps when the parent component's onSave operation is quick
+      await new Promise(resolve => setTimeout(resolve, 100))
+      
+      await onSave(config)
+      
+      // Keep loading state active for at least a short duration
+      // to ensure the user sees feedback
+      await new Promise(resolve => setTimeout(resolve, 500))
+    } catch (error) {
+      toast.error('Error applying watermark')
+      console.error(error)
+    } finally {
+      // Only update loading state if the component is still mounted
+      if (loadingRef.current) {
+        setLoadingState(false)
+      }
     }
+  }
+  
+  const handleSaveWithDebounce = async () => {
+    if (isProcessing) return
+    setIsProcessing(true)
     
-    onSave(config)
+    try {
+      await handleSave()
+    } finally {
+      setIsProcessing(false)
+    }
   }
   
   const selectedWatermark = watermarks.find(w => w.id === selectedWatermarkId)
@@ -238,8 +295,23 @@ const WatermarkEditor = ({
       const node = watermarkRef.current
       
       // Get the new dimensions
-      const newWidth = node.width() * node.scaleX()
-      const newHeight = node.height() * node.scaleY()
+      let newWidth = node.width() * node.scaleX()
+      let newHeight = node.height() * node.scaleY()
+      
+      // If maintaining aspect ratio, adjust the dimensions
+      if (maintainAspectRatio && originalAspectRatio > 0) {
+        // Determine which dimension changed more during transform
+        const widthChange = Math.abs(1 - (newWidth / (dimensions.width * displayScale)))
+        const heightChange = Math.abs(1 - (newHeight / (dimensions.height * displayScale)))
+        
+        if (widthChange >= heightChange) {
+          // Width changed more, adjust height
+          newHeight = newWidth / originalAspectRatio
+        } else {
+          // Height changed more, adjust width
+          newWidth = newHeight * originalAspectRatio
+        }
+      }
       
       // Reset scale to 1
       node.scaleX(1)
@@ -353,6 +425,22 @@ const WatermarkEditor = ({
                         if (newBox.width < 10 || newBox.height < 10) {
                           return oldBox
                         }
+                        
+                        // If maintaining aspect ratio, enforce it during transformation
+                        if (maintainAspectRatio && originalAspectRatio > 0) {
+                          // Determine which dimension is being changed
+                          const widthChange = Math.abs(oldBox.width - newBox.width)
+                          const heightChange = Math.abs(oldBox.height - newBox.height)
+                          
+                          if (widthChange >= heightChange) {
+                            // Width is changing more, so adjust height to maintain aspect ratio
+                            newBox.height = newBox.width / originalAspectRatio
+                          } else {
+                            // Height is changing more, so adjust width to maintain aspect ratio
+                            newBox.width = newBox.height * originalAspectRatio
+                          }
+                        }
+                        
                         return newBox
                       }}
                       rotationSnaps={[0, 45, 90, 135, 180, 225, 270, 315]}
@@ -365,6 +453,7 @@ const WatermarkEditor = ({
                       anchorFill="#ffffff"
                       rotateEnabled={true}
                       resizeEnabled={true}
+                      keepRatio={maintainAspectRatio}
                     />
                   )}
                 </Layer>
@@ -620,10 +709,10 @@ const WatermarkEditor = ({
             </Button>
             <Button
               className="flex-1"
-              onClick={handleSave}
-              disabled={!selectedWatermarkId || loading}
+              onClick={handleSaveWithDebounce}
+              disabled={!selectedWatermarkId || loading || isProcessing}
             >
-              {loading ? (
+              {loading || isProcessing ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Saving...
                 </>
