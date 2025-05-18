@@ -15,7 +15,7 @@ import {
   DialogFooter
 } from '@/components/ui/dialog'
 import Image from 'next/image'
-// import { compressImageToFile } from '@/utils/imageCompression'
+import { compressImageToFile } from '@/utils/imageCompression'
 
 interface Watermark {
   id: string
@@ -75,12 +75,13 @@ const WatermarksPage = () => {
       try {
         // For watermarks, we need to preserve transparency if it exists
         // but still apply compression
-        // const compressedFile = await compressImageToFile(file, {
-        //   // Use PNG format only if the original is PNG (to preserve transparency)
-        //   // The utility will automatically detect if transparency is needed
-        //   format: file.type.includes('png') ? 'png' : 'jpeg'
-        // })
-        const compressedFile = file
+        const compressedFile = await compressImageToFile(file, {
+          // Use PNG format only if the original is PNG (to preserve transparency)
+          // The utility will automatically detect if transparency is needed
+          format: file.type.includes('png') ? 'png' : 'jpeg',
+          quality: 60
+        })
+        // const compressedFile = file
         
         setSelectedFile(compressedFile)
       } catch (error) {

@@ -406,6 +406,53 @@ const WatermarkEditor = ({
                       draggable
                       offsetX={(dimensions.width * displayScale) / 2}
                       offsetY={(dimensions.height * displayScale) / 2}
+                      dragBoundFunc={(pos) => {
+                        // Calculate the bounds of the photo
+                        const photoWidth = photoSize.width * displayScale;
+                        const photoHeight = photoSize.height * displayScale;
+                        
+                        // Calculate the watermark's dimensions
+                        const watermarkWidth = dimensions.width * displayScale;
+                        const watermarkHeight = dimensions.height * displayScale;
+                        
+                        // Adjustments needed for rotation
+                        // For a rotated rectangle, we use a simplified approach with a bounding box
+                        let boundingWidth = watermarkWidth;
+                        let boundingHeight = watermarkHeight;
+                        
+                        // If significantly rotated (not close to 0, 90, 180, 270 degrees)
+                        // calculate a more accurate bounding box for the rotated watermark
+                        const rotationRad = (rotation * Math.PI) / 180;
+                        const isAlignedRotation = 
+                          Math.abs(Math.sin(rotationRad)) < 0.1 || 
+                          Math.abs(Math.cos(rotationRad)) < 0.1;
+                          
+                        if (!isAlignedRotation) {
+                          // For a rotated rectangle, the bounding box is larger
+                          const absCos = Math.abs(Math.cos(rotationRad));
+                          const absSin = Math.abs(Math.sin(rotationRad));
+                          
+                          boundingWidth = 
+                            watermarkWidth * absCos + watermarkHeight * absSin;
+                          boundingHeight = 
+                            watermarkWidth * absSin + watermarkHeight * absCos;
+                        }
+                        
+                        // Calculate margins to keep the watermark fully inside the photo
+                        // Since position is at the center of watermark, we need half dimensions
+                        const marginX = boundingWidth / 2;
+                        const marginY = boundingHeight / 2;
+                        
+                        // Clamp position to keep the watermark within the photo boundaries
+                        // We use max at left/top boundaries and min at right/bottom boundaries
+                        const clampedX = Math.max(marginX, Math.min(photoWidth - marginX, pos.x));
+                        const clampedY = Math.max(marginY, Math.min(photoHeight - marginY, pos.y));
+                        
+                        return {
+                          x: clampedX,
+                          y: clampedY
+                        };
+                      }}
                       onDragEnd={(e) => {
                         setPosition({
                           x: e.target.x() / displayScale,
@@ -423,25 +470,91 @@ const WatermarkEditor = ({
                       boundBoxFunc={(oldBox, newBox) => {
                         // Limit minimum size
                         if (newBox.width < 10 || newBox.height < 10) {
-                          return oldBox
+                          return oldBox;
+                        }
+                        
+                        // Calculate the bounds of the photo
+                        const photoWidth = photoSize.width * displayScale;
+                        const photoHeight = photoSize.height * displayScale;
+                        
+                        // Get the watermark's center position (which stays fixed during resize)
+                        const centerX = newBox.x + newBox.width / 2;
+                        const centerY = newBox.y + newBox.height / 2;
+                        
+                        // Ensure the watermark's edges don't exceed the photo boundaries
+                        // We need to calculate the maximum dimensions that can fit at the current position
+                        const maxLeftDistance = centerX;
+                        const maxRightDistance = photoWidth - centerX;
+                        const maxTopDistance = centerY;
+                        const maxBottomDistance = photoHeight - centerY;
+                        
+                        // Calculate maximum possible dimensions at current position
+                        const maxPossibleWidth = 2 * Math.min(maxLeftDistance, maxRightDistance);
+                        const maxPossibleHeight = 2 * Math.min(maxTopDistance, maxBottomDistance);
+                        
+                        // Apply the constraints to the new dimensions
+                        if (newBox.width > maxPossibleWidth) {
+                          // Adjust width while maintaining the center position
+                          const widthDiff = newBox.width - maxPossibleWidth;
+                          newBox.width = maxPossibleWidth;
+                          newBox.x += widthDiff / 2;
+                        }
+                        
+                        if (newBox.height > maxPossibleHeight) {
+                          // Adjust height while maintaining the center position
+                          const heightDiff = newBox.height - maxPossibleHeight;
+                          newBox.height = maxPossibleHeight;
+                          newBox.y += heightDiff / 2;
                         }
                         
                         // If maintaining aspect ratio, enforce it during transformation
                         if (maintainAspectRatio && originalAspectRatio > 0) {
-                          // Determine which dimension is being changed
-                          const widthChange = Math.abs(oldBox.width - newBox.width)
-                          const heightChange = Math.abs(oldBox.height - newBox.height)
+                          // Calculate current aspect ratio
+                          const currentRatio = newBox.width / newBox.height;
                           
-                          if (widthChange >= heightChange) {
-                            // Width is changing more, so adjust height to maintain aspect ratio
-                            newBox.height = newBox.width / originalAspectRatio
-                          } else {
-                            // Height is changing more, so adjust width to maintain aspect ratio
-                            newBox.width = newBox.height * originalAspectRatio
+                          // Determine if we need to adjust width or height to maintain the original ratio
+                          if (Math.abs(currentRatio - originalAspectRatio) > 0.01) {
+                            // Determine which adjustment would be smaller
+                            const adjustedHeight = newBox.width / originalAspectRatio;
+                            const adjustedWidth = newBox.height * originalAspectRatio;
+                            
+                            // Check which adjustment keeps the watermark within bounds
+                            if (adjustedHeight <= maxPossibleHeight && 
+                                (adjustedWidth > maxPossibleWidth || 
+                                 Math.abs(adjustedHeight - newBox.height) < Math.abs(adjustedWidth - newBox.width))) {
+                              // Adjust height to match width
+                              const heightDiff = newBox.height - adjustedHeight;
+                              newBox.height = adjustedHeight;
+                              newBox.y += heightDiff / 2;
+                            } else if (adjustedWidth <= maxPossibleWidth) {
+                              // Adjust width to match height
+                              const widthDiff = newBox.width - adjustedWidth;
+                              newBox.width = adjustedWidth;
+                              newBox.x += widthDiff / 2;
+                            } else {
+                              // If neither adjustment works, reduce dimensions while maintaining aspect ratio
+                              // Use the more constraining dimension as the basis
+                              const widthRatio = maxPossibleWidth / newBox.width;
+                              const heightRatio = maxPossibleHeight / newBox.height;
+                              
+                              if (widthRatio < heightRatio) {
+                                // Width is more constraining
+                                newBox.width = maxPossibleWidth;
+                                newBox.height = maxPossibleWidth / originalAspectRatio;
+                              } else {
+                                // Height is more constraining
+                                newBox.height = maxPossibleHeight;
+                                newBox.width = maxPossibleHeight * originalAspectRatio;
+                              }
+                              
+                              // Recenter the box
+                              newBox.x = centerX - newBox.width / 2;
+                              newBox.y = centerY - newBox.height / 2;
+                            }
                           }
                         }
                         
-                        return newBox
+                        return newBox;
                       }}
                       rotationSnaps={[0, 45, 90, 135, 180, 225, 270, 315]}
                       enabledAnchors={['top-left', 'top-right', 'bottom-left', 'bottom-right']}
@@ -475,6 +588,30 @@ const WatermarkEditor = ({
         </div>
         
         <div className="space-y-4">
+          <div className="flex gap-2 mt-6">
+              <Button
+                variant="outline"
+                className="flex-1"
+                onClick={onCancel}
+              >
+                Cancel
+              </Button>
+              <Button
+                className="flex-1"
+                onClick={handleSaveWithDebounce}
+                disabled={!selectedWatermarkId || loading || isProcessing}
+              >
+                {loading || isProcessing ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Saving...
+                  </>
+                ) : (
+                  <>
+                    <Save className="mr-2 h-4 w-4" /> Apply Watermark
+                  </>
+                )}
+              </Button>
+          </div>
           <Card className="p-4">
             <h3 className="text-sm font-medium mb-3">Select Watermark</h3>
             <div className="grid grid-cols-2 gap-2 mb-4">
@@ -698,31 +835,6 @@ const WatermarkEditor = ({
               </div>
             </Card>
           )}
-          
-          <div className="flex gap-2 mt-6">
-            <Button
-              variant="outline"
-              className="flex-1"
-              onClick={onCancel}
-            >
-              Cancel
-            </Button>
-            <Button
-              className="flex-1"
-              onClick={handleSaveWithDebounce}
-              disabled={!selectedWatermarkId || loading || isProcessing}
-            >
-              {loading || isProcessing ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Saving...
-                </>
-              ) : (
-                <>
-                  <Save className="mr-2 h-4 w-4" /> Apply Watermark
-                </>
-              )}
-            </Button>
-          </div>
         </div>
       </div>
     </div>
