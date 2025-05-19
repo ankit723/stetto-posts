@@ -211,19 +211,20 @@ const WatermarkEditor = ({
   
   // Attach transformer to watermark when it's available
   useEffect(() => {
-    if (watermarkRef.current && transformerRef.current) {
-      transformerRef.current.nodes([watermarkRef.current])
-      transformerRef.current.getLayer()?.batchDraw()
+    if (transformerRef.current) { // Check if transformer itself exists
+      if (watermarkNode && watermarkRef.current) {
+        transformerRef.current.nodes([watermarkRef.current]);
+      } else {
+        // If watermarkNode is null or watermarkRef.current is null, clear the transformer nodes
+        transformerRef.current.nodes([]);
+      }
+      // Batch draw the layer where the transformer resides to reflect changes
+      const layer = transformerRef.current.getLayer();
+      if (layer) {
+        layer.batchDraw();
+      }
     }
-  }, [watermarkNode])
-  
-  // Add a new useEffect to ensure transformer is attached after position and dimensions are set
-  useEffect(() => {
-    if (watermarkRef.current && transformerRef.current && position.x !== 0 && position.y !== 0) {
-      transformerRef.current.nodes([watermarkRef.current])
-      layerRef.current?.batchDraw()
-    }
-  }, [position, dimensions, rotation])
+  }, [watermarkNode]); // Depend only on watermarkNode to attach/detach/clear the transformer
   
   // Function to update both the state and ref for loading
   const setLoadingState = (isLoading: boolean) => {
@@ -241,21 +242,21 @@ const WatermarkEditor = ({
     setLoadingState(true)
     
     try {
-      // Calculate the position in the original photo coordinates
-      // Since we're working with the actual image dimensions now,
-      // we just need to adjust for the centered rotation point
-      const adjustedPosition = {
-        x: position.x - dimensions.width / 2,
-        y: position.y - dimensions.height / 2
-      }
-      
-      const config: WatermarkConfig = {
-        watermarkId: selectedWatermarkId,
-        position: adjustedPosition,
-        dimensions,
-        rotation
-      }
-      
+    // Calculate the position in the original photo coordinates
+    // Since we're working with the actual image dimensions now,
+    // we just need to adjust for the centered rotation point
+    const adjustedPosition = {
+      x: position.x - dimensions.width / 2,
+      y: position.y - dimensions.height / 2
+    }
+    
+    const config: WatermarkConfig = {
+      watermarkId: selectedWatermarkId,
+      position: adjustedPosition,
+      dimensions,
+      rotation
+    }
+    
       // Add a slight delay to ensure loading state is applied in the UI
       // This helps when the parent component's onSave operation is quick
       await new Promise(resolve => setTimeout(resolve, 100))
@@ -343,12 +344,6 @@ const WatermarkEditor = ({
   
   return (
     <div className="flex flex-col h-full">
-      <div className="flex justify-between items-center mb-4">
-        <h2 className="text-xl font-semibold">Watermark Editor</h2>
-        <Button variant="ghost" size="sm" onClick={onCancel}>
-          <X className="h-4 w-4" />
-        </Button>
-      </div>
       
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 flex-grow">
         <div className="lg:col-span-2">
@@ -468,93 +463,114 @@ const WatermarkEditor = ({
                     <Transformer
                       ref={transformerRef}
                       boundBoxFunc={(oldBox, newBox) => {
-                        // Limit minimum size
-                        if (newBox.width < 10 || newBox.height < 10) {
+                        const minSize = 10; // Minimum width/height for the watermark
+
+                        // Prevent inversion or newBox becoming too small
+                        if (newBox.width < minSize || newBox.height < minSize) {
                           return oldBox;
                         }
-                        
-                        // Calculate the bounds of the photo
-                        const photoWidth = photoSize.width * displayScale;
-                        const photoHeight = photoSize.height * displayScale;
-                        
-                        // Get the watermark's center position (which stays fixed during resize)
-                        const centerX = newBox.x + newBox.width / 2;
-                        const centerY = newBox.y + newBox.height / 2;
-                        
-                        // Ensure the watermark's edges don't exceed the photo boundaries
-                        // We need to calculate the maximum dimensions that can fit at the current position
-                        const maxLeftDistance = centerX;
-                        const maxRightDistance = photoWidth - centerX;
-                        const maxTopDistance = centerY;
-                        const maxBottomDistance = photoHeight - centerY;
-                        
-                        // Calculate maximum possible dimensions at current position
-                        const maxPossibleWidth = 2 * Math.min(maxLeftDistance, maxRightDistance);
-                        const maxPossibleHeight = 2 * Math.min(maxTopDistance, maxBottomDistance);
-                        
-                        // Apply the constraints to the new dimensions
-                        if (newBox.width > maxPossibleWidth) {
-                          // Adjust width while maintaining the center position
-                          const widthDiff = newBox.width - maxPossibleWidth;
-                          newBox.width = maxPossibleWidth;
-                          newBox.x += widthDiff / 2;
-                        }
-                        
-                        if (newBox.height > maxPossibleHeight) {
-                          // Adjust height while maintaining the center position
-                          const heightDiff = newBox.height - maxPossibleHeight;
-                          newBox.height = maxPossibleHeight;
-                          newBox.y += heightDiff / 2;
-                        }
-                        
-                        // If maintaining aspect ratio, enforce it during transformation
+
+                        const stageWidth = photoSize.width * displayScale;
+                        const stageHeight = photoSize.height * displayScale;
+
+                        let constrainedBox = { ...newBox };
+
+                        // Apply constraints while respecting aspect ratio if enabled
                         if (maintainAspectRatio && originalAspectRatio > 0) {
-                          // Calculate current aspect ratio
-                          const currentRatio = newBox.width / newBox.height;
-                          
-                          // Determine if we need to adjust width or height to maintain the original ratio
-                          if (Math.abs(currentRatio - originalAspectRatio) > 0.01) {
-                            // Determine which adjustment would be smaller
-                            const adjustedHeight = newBox.width / originalAspectRatio;
-                            const adjustedWidth = newBox.height * originalAspectRatio;
-                            
-                            // Check which adjustment keeps the watermark within bounds
-                            if (adjustedHeight <= maxPossibleHeight && 
-                                (adjustedWidth > maxPossibleWidth || 
-                                 Math.abs(adjustedHeight - newBox.height) < Math.abs(adjustedWidth - newBox.width))) {
-                              // Adjust height to match width
-                              const heightDiff = newBox.height - adjustedHeight;
-                              newBox.height = adjustedHeight;
-                              newBox.y += heightDiff / 2;
-                            } else if (adjustedWidth <= maxPossibleWidth) {
-                              // Adjust width to match height
-                              const widthDiff = newBox.width - adjustedWidth;
-                              newBox.width = adjustedWidth;
-                              newBox.x += widthDiff / 2;
-                            } else {
-                              // If neither adjustment works, reduce dimensions while maintaining aspect ratio
-                              // Use the more constraining dimension as the basis
-                              const widthRatio = maxPossibleWidth / newBox.width;
-                              const heightRatio = maxPossibleHeight / newBox.height;
-                              
-                              if (widthRatio < heightRatio) {
-                                // Width is more constraining
-                                newBox.width = maxPossibleWidth;
-                                newBox.height = maxPossibleWidth / originalAspectRatio;
-                              } else {
-                                // Height is more constraining
-                                newBox.height = maxPossibleHeight;
-                                newBox.width = maxPossibleHeight * originalAspectRatio;
-                              }
-                              
-                              // Recenter the box
-                              newBox.x = centerX - newBox.width / 2;
-                              newBox.y = centerY - newBox.height / 2;
+                          // Check if constrainedBox exceeds stage boundaries and scale down if necessary
+                          let scale = 1;
+                          if (constrainedBox.width > stageWidth) {
+                            scale = stageWidth / constrainedBox.width;
+                          }
+                          if (constrainedBox.height * scale > stageHeight) { // Check height with potential new scale
+                            scale = Math.min(scale, stageHeight / constrainedBox.height);
+                          }
+                          // If height constraint was more restrictive after width constraint
+                           if (constrainedBox.width * scale > stageWidth) {
+                               scale = Math.min(scale, stageWidth / constrainedBox.width);
+                           }
+
+
+                          constrainedBox.width *= scale;
+                          constrainedBox.height *= scale;
+
+                          // Enforce minimum size, adjusting the other dimension to maintain aspect ratio
+                          if (constrainedBox.width < minSize) {
+                            constrainedBox.width = minSize;
+                            constrainedBox.height = minSize / originalAspectRatio;
+                          }
+                          if (constrainedBox.height < minSize) {
+                            constrainedBox.height = minSize;
+                            constrainedBox.width = minSize * originalAspectRatio;
+                          }
+                           // If enforcing min size made it too big again (e.g. stage is very small)
+                           // Re-cap at stage dimensions, this time it might break minSize if stage is smaller.
+                            if (constrainedBox.width > stageWidth) {
+                                constrainedBox.width = stageWidth;
+                                constrainedBox.height = stageWidth / originalAspectRatio;
                             }
+                            if (constrainedBox.height > stageHeight) {
+                                constrainedBox.height = stageHeight;
+                                constrainedBox.width = stageHeight * originalAspectRatio;
+                            }
+
+                        } else { // Aspect ratio not maintained, just clamp dimensions
+                          if (constrainedBox.width > stageWidth) {
+                            constrainedBox.width = stageWidth;
+                          }
+                          if (constrainedBox.height > stageHeight) {
+                            constrainedBox.height = stageHeight;
+                          }
+                          // Enforce minimum size without aspect ratio
+                          if (constrainedBox.width < minSize) {
+                            constrainedBox.width = minSize;
+                          }
+                          if (constrainedBox.height < minSize) {
+                            constrainedBox.height = minSize;
                           }
                         }
+
+                        // Clamp position to keep the box within stage boundaries
+                        if (constrainedBox.x < 0) {
+                          constrainedBox.x = 0;
+                        }
+                        if (constrainedBox.y < 0) {
+                          constrainedBox.y = 0;
+                        }
+                        if (constrainedBox.x + constrainedBox.width > stageWidth) {
+                          constrainedBox.x = stageWidth - constrainedBox.width;
+                        }
+                        if (constrainedBox.y + constrainedBox.height > stageHeight) {
+                          constrainedBox.y = stageHeight - constrainedBox.height;
+                        }
                         
-                        return newBox;
+                        // Final safety check for position if box width/height somehow ended up larger than stage
+                        // (e.g. minSize with aspect ratio on a very small stage)
+                        if (constrainedBox.x < 0) constrainedBox.x = 0;
+                        if (constrainedBox.y < 0) constrainedBox.y = 0;
+                        
+                        // If, after all constraints, the box is still too small (e.g., stage itself is < minSize)
+                        // or if positional clamping made it invalid (width became negative because x was clamped badly)
+                        // this could happen if stageWidth - constrainedBox.width is negative.
+                        if (constrainedBox.width < minSize || constrainedBox.height < minSize) {
+                           // Fallback to oldBox if result is invalid or too small due to extreme constraints
+                           // Or, adjust one dimension to meet minSize and accept potential AR violation if not fixable.
+                           // For now, oldBox is safest if constraints lead to sub-minSize.
+                           const finalWidthCheck = stageWidth - constrainedBox.x;
+                           const finalHeightCheck = stageHeight - constrainedBox.y;
+                           if (finalWidthCheck < minSize || finalHeightCheck < minSize) return oldBox; // Truly impossible scenario
+
+                           if(constrainedBox.width < minSize) constrainedBox.width = minSize;
+                           if(constrainedBox.height < minSize) constrainedBox.height = minSize;
+                           // Re-clamp position after ensuring minSize
+                            if (constrainedBox.x + constrainedBox.width > stageWidth) constrainedBox.x = stageWidth - constrainedBox.width;
+                            if (constrainedBox.y + constrainedBox.height > stageHeight) constrainedBox.y = stageHeight - constrainedBox.height;
+                            if (constrainedBox.x < 0) constrainedBox.x = 0;
+                            if (constrainedBox.y < 0) constrainedBox.y = 0;
+                        }
+
+
+                        return constrainedBox;
                       }}
                       rotationSnaps={[0, 45, 90, 135, 180, 225, 270, 315]}
                       enabledAnchors={['top-left', 'top-right', 'bottom-left', 'bottom-right']}

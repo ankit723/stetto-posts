@@ -792,7 +792,7 @@ ${totalPhotos > 500 ? `\nNote: This download includes the first 500 photos out o
           
           {/* Download Progress Bar */}
           {downloadProgress > 0 && (
-            <div className="mb-6 p-4 bg-white border rounded-lg shadow-sm">
+            <div className="mb-6 p-4 border rounded-lg shadow-sm">
               <div className="flex justify-between mb-1">
                 <span className="text-sm font-medium">{downloadStatus}</span>
                 <span className="text-sm font-medium">{downloadProgress}%</span>
