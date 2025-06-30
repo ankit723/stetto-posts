@@ -125,15 +125,17 @@ export async function isUserAdmin(): Promise<boolean> {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) {
+    console.log('No user found')
     return false
   }
+  console.log('User found', user)
 
   try {
     const user2 = await db.user.findUnique({
       where: { id: user.id },
       select: { role: true }
     })
-
+    console.log('User2 found', user2)
 
     return user2?.role === 'ADMIN'
   } catch (error) {
