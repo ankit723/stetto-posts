@@ -35,6 +35,18 @@ import WatermarkedImage from '@/components/watermark/WatermarkedImage'
 interface Photo {
   id: string
   url: string
+  sequence?: number
+}
+
+interface WatermarkConfig {
+  id: string
+  position: { x: number; y: number }
+  dimensions: { width: number; height: number }
+  rotation: number
+  watermark: {
+    id: string
+    url: string
+  }
 }
 
 interface Collection {
@@ -42,8 +54,10 @@ interface Collection {
   name: string
   description: string
   photos: Photo[]
+  photoCount?: number // Total photo count from optimized API
   createdAt: string
   hasWatermark: boolean
+  watermarkConfig?: WatermarkConfig | null // Watermark config from optimized API
 }
 
 interface PreviewImage {
@@ -55,54 +69,13 @@ interface PreviewImage {
 
 // Add a new component for collection thumbnails
 const CollectionThumbnail = ({ collection }: { collection: Collection }) => {
-  const [watermarkConfig, setWatermarkConfig] = useState<any>(null)
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  useEffect(() => {
-    // Only fetch watermark config if the collection has a watermark
-    if (!collection.hasWatermark) {
-      setLoading(false)
-      return
-    }
+  // For minimal API response, we don't have photos initially
+  const watermarkConfig = collection.watermarkConfig
 
-    const fetchWatermarkConfig = async () => {
-      try {
-        setLoading(true)
-        const response = await fetch(`/api/collections/${collection.id}/watermark`)
-        
-        if (response.ok) {
-          const data = await response.json()
-          if (data && data.watermark) {
-            setWatermarkConfig(data)
-          } else {
-            setError('No watermark configuration found')
-          }
-        } else {
-          setError('Failed to load watermark configuration')
-        }
-      } catch (error) {
-        console.error('Error fetching watermark config:', error)
-        setError('Error loading watermark')
-      } finally {
-        setLoading(false)
-      }
-    }
-
-    if (collection.id && collection.photos.length > 0) {
-      fetchWatermarkConfig()
-    }
-  }, [collection.id, collection.hasWatermark, collection.photos])
-
-  if (loading) {
-    return (
-      <div className="w-full h-full flex items-center justify-center">
-        <Loader2 className="h-6 w-6 animate-spin text-primary" />
-      </div>
-    )
-  }
-
-  // If collection has watermark and we have the config, use WatermarkedImage
+  // If collection has photos and watermark config, use WatermarkedImage
   if (collection.hasWatermark && watermarkConfig && watermarkConfig.watermark && collection.photos.length > 0) {
     return (
       <WatermarkedImage
@@ -119,7 +92,7 @@ const CollectionThumbnail = ({ collection }: { collection: Collection }) => {
     )
   }
 
-  // For collections without watermark or if there was an error loading watermark config
+  // For collections with photos (no watermark)
   if (collection.photos.length > 0) {
     return (
       <Image
@@ -134,10 +107,13 @@ const CollectionThumbnail = ({ collection }: { collection: Collection }) => {
     )
   }
 
-  // Fallback for collections without photos
+  // Fallback for collections without photos (minimal API response)
   return (
-    <div className="w-full h-full flex items-center justify-center">
-      <ImageIcon className="h-12 w-12 text-gray-300" />
+    <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-gray-100 to-gray-200">
+      <div className="text-center">
+        <ImageIcon className="h-12 w-12 text-gray-400 mx-auto mb-2" />
+        <p className="text-sm text-gray-500 font-medium">{collection.name}</p>
+      </div>
     </div>
   )
 }
@@ -210,28 +186,15 @@ const CollectionsPage = () => {
   const fetchCollections = async () => {
     try {
       setLoading(true)
-      const response = await fetch('/api/collections')
+      // Use the minimal API endpoint for maximum speed
+      const response = await fetch('/api/collections?minimal=true')
       
       if (!response.ok) {
         throw new Error('Failed to fetch collections')
       }
       
-      const data = await response.json()
-      
-      // Add hasWatermark property based on whether the collection has a watermark configuration
-      const collectionsWithWatermarkInfo = await Promise.all(
-        data.map(async (collection: Collection) => {
-          try {
-            const watermarkResponse = await fetch(`/api/collections/${collection.id}/watermark`)
-            const hasWatermark = watermarkResponse.ok
-            return { ...collection, hasWatermark }
-          } catch (error) {
-            return { ...collection, hasWatermark: false }
-          }
-        })
-      )
-      
-      setCollections(collectionsWithWatermarkInfo)
+      const collections = await response.json()
+      setCollections(collections)
     } catch (error) {
       console.error('Error fetching collections:', error)
       toast.error('Failed to load collections. Please try again.')
@@ -1255,8 +1218,8 @@ const CollectionsPage = () => {
                   <span className="text-xs text-gray-500">
                     {new Date(collection.createdAt).toLocaleDateString()}
                   </span>
-                  <span className="text-xs text-gray-500">
-                    {collection.photos.length} {collection.photos.length === 1 ? 'photo' : 'photos'}
+                  <span className="text-xs font-medium text-primary">
+                    {collection.photoCount || collection.photos?.length || 0} {(collection.photoCount || collection.photos?.length || 0) === 1 ? 'photo' : 'photos'}
                   </span>
                 </div>
               </CardContent>

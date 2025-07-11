@@ -35,7 +35,7 @@ async function ensurePhotoSequences(photos: any[], collectionId: string) {
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params
   const supabase = createClient()
@@ -47,13 +47,51 @@ export async function GET(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
+    // Get pagination parameters
+    const url = new URL(request.url)
+    const limit = parseInt(url.searchParams.get('limit') || '0')
+    const offset = parseInt(url.searchParams.get('offset') || '0')
+    const photosOnly = url.searchParams.get('photosOnly') === 'true'
+
+    if (photosOnly) {
+      // Return only photos for pagination
+      const photos = await db.photo.findMany({
+        where: {
+          collections: {
+            some: {
+              id: id
+            }
+          }
+        },
+        orderBy: {
+          sequence: 'asc'
+        },
+        ...(limit > 0 && {
+          take: limit,
+          skip: offset
+        })
+      })
+
+      return NextResponse.json({ photos })
+    }
+
+    // Get collection with limited photos for initial load
     const collection = await db.collection.findUnique({
       where: { id },
       include: { 
         photos: {
           orderBy: {
-            sequence: 'asc' // Order photos by sequence
+            sequence: 'asc'
           },
+          ...(limit > 0 && {
+            take: limit,
+            skip: offset
+          })
+        },
+        _count: {
+          select: {
+            photos: true
+          }
         }
       }
     })
@@ -67,7 +105,13 @@ export async function GET(
       collection.photos = await ensurePhotoSequences(collection.photos, id)
     }
 
-    return NextResponse.json(collection)
+    // Add total photo count to the response
+    const responseData = {
+      ...collection,
+      totalPhotos: collection._count.photos
+    }
+
+    return NextResponse.json(responseData)
   } catch (error) {
     console.error('Error fetching collection:', error)
     const errorMessage = error instanceof Error ? error.message : 'Unknown error'
@@ -77,9 +121,9 @@ export async function GET(
 
 export async function PUT(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
-  const { id } = params
+  const { id } = await params
   const supabase = createClient()
 
   try {
@@ -252,7 +296,7 @@ export async function PUT(
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params
   const supabase = createClient()

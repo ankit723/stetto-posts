@@ -6,10 +6,10 @@ export const dynamic = 'force-dynamic'; // Disable caching for this route
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   const supabase = createClient()
-  const { id } = params
+  const { id } = await params
   
   try {
     // Verify authentication

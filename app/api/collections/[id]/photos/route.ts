@@ -4,9 +4,9 @@ import { db, executeWithRetry } from '@/utils/db'
 // POST /api/collections/[id]/photos - Add photos to an existing collection
 export async function POST(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
-  const { id } = params
+  const { id } = await params
   
   try {
     const { images } = await request.json()

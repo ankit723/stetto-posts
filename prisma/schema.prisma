@@ -40,6 +40,10 @@ model PhotoConfig {
   watermark Photo? @relation(fields: [watermarkId], references: [id], name: "WatermarkConfig")
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([collectionId])
+  @@index([userId])
+  @@index([watermarkId])
 }
 
 model Photo {
@@ -53,6 +57,10 @@ model Photo {
   updatedAt DateTime @updatedAt
   collections Collection[]
   photoConfigs PhotoConfig[] @relation("WatermarkConfig")
+
+  @@index([sequence])
+  @@index([isWatermark])
+  @@index([userId])
 }
 
 model Collection {
@@ -65,4 +73,7 @@ model Collection {
   user      User     @relation(fields: [userId], references: [id])
   userId    String
   photoConfigs PhotoConfig[]
+
+  @@index([userId])
+  @@index([createdAt])
 }

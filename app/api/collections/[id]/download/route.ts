@@ -128,7 +128,7 @@ async function processPhoto(
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   const supabase = createClient()
   const { id } = await params

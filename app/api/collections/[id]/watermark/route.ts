@@ -5,7 +5,7 @@ import { db } from '@/utils/db'
 // GET /api/collections/[id]/watermark - Get the watermark configuration for a collection
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   const supabase = createClient()
   const { id } = await params
@@ -66,10 +66,10 @@ export async function GET(
 // POST /api/collections/[id]/watermark - Save a watermark configuration
 export async function POST(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   const supabase = createClient()
-  const { id } = params
+  const { id } = await params
 
   try {
     // Verify authentication
@@ -178,10 +178,10 @@ export async function POST(
 // DELETE /api/collections/[id]/watermark - Remove a watermark configuration
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   const supabase = createClient()
-  const { id } = params
+  const { id } = await params
 
   try {
     // Verify authentication

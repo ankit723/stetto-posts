@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -42,6 +42,7 @@ interface Collection {
   description: string
   photos: Photo[]
   user: User
+  totalPhotos?: number
 }
 
 interface Watermark {
@@ -130,6 +131,7 @@ const CollectionPage = () => {
   
   const [collection, setCollection] = useState<Collection | null>(null)
   const [loading, setLoading] = useState(true)
+  const [loadingMore, setLoadingMore] = useState(false)
   const [activePhotoIndex, setActivePhotoIndex] = useState<number | null>(null)
   const [isLightboxOpen, setIsLightboxOpen] = useState(false)
   const [isDownloading, setIsDownloading] = useState<string | null>(null)
@@ -147,12 +149,24 @@ const CollectionPage = () => {
   const [totalImages, setTotalImages] = useState(0)
   const [downloadProgress, setDownloadProgress] = useState(0)
   const [downloadStatus, setDownloadStatus] = useState('')
+  
+  // New pagination state
+  const [photos, setPhotos] = useState<Photo[]>([])
+  const [currentPage, setCurrentPage] = useState(0)
+  const [totalPhotos, setTotalPhotos] = useState(0)
+  const [hasMore, setHasMore] = useState(true)
+  
+  const PHOTOS_PER_PAGE = 24
+
+  // Ref for intersection observer
+  const loadMoreRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     const fetchCollection = async () => {
       try {
         setLoading(true)
-        const response = await fetch(`/api/collections/${id}`)
+        // Load collection with first batch of photos
+        const response = await fetch(`/api/collections/${id}?limit=${PHOTOS_PER_PAGE}&offset=0`)
         
         if (!response.ok) {
           throw new Error('Failed to fetch collection')
@@ -160,24 +174,17 @@ const CollectionPage = () => {
         
         const data = await response.json()
         
-        // Debug: Log the original order and sequence values of photos
-        console.log('Original photos order from API:', data.photos.map((p: Photo, idx: number) => 
-          `[${idx}] id=${p.id.substring(0, 6)}, seq=${p.sequence}, url=${p.url.substring(0, 30)}...`
-        ))
-        
-        // Debug: Log the sequence values of photos
-        console.log('Photos before sorting:', data.photos.map((p: Photo) => ({ id: p.id.substring(0, 6), sequence: p.sequence })))
-        
-        // Ensure photos are sorted by sequence
+        // Sort photos by sequence
         if (data.photos) {
           data.photos.sort((a: Photo, b: Photo) => a.sequence - b.sequence)
         }
         
-        // Debug: Log the sequence values after sorting
-        console.log('Photos after sorting:', data.photos.map((p: Photo) => ({ id: p.id.substring(0, 6), sequence: p.sequence })))
-        
         setCollection(data)
-        setTotalImages(data.photos?.length || 0)
+        setPhotos(data.photos || [])
+        setTotalPhotos(data.totalPhotos || 0)
+        setTotalImages(data.totalPhotos || 0)
+        setHasMore((data.photos?.length || 0) < (data.totalPhotos || 0))
+        setCurrentPage(1)
       } catch (error) {
         console.error('Error fetching collection:', error)
         setError('Failed to load collection. Please try again.')
@@ -241,7 +248,7 @@ const CollectionPage = () => {
   }
 
   const handleNextPhoto = () => {
-    if (activePhotoIndex !== null && collection?.photos && activePhotoIndex < collection.photos.length - 1) {
+    if (activePhotoIndex !== null && photos && activePhotoIndex < photos.length - 1) {
       setActivePhotoIndex(activePhotoIndex + 1)
     }
   }
@@ -598,13 +605,73 @@ ${totalPhotos > 500 ? `\nNote: This download includes the first 500 photos out o
     }
   }
 
+  const loadMorePhotos = useCallback(async () => {
+    if (!hasMore || loadingMore) return
+
+    try {
+      setLoadingMore(true)
+      const offset = currentPage * PHOTOS_PER_PAGE
+      const response = await fetch(`/api/collections/${id}?photosOnly=true&limit=${PHOTOS_PER_PAGE}&offset=${offset}`)
+      
+      if (!response.ok) {
+        throw new Error('Failed to load more photos')
+      }
+      
+      const data = await response.json()
+      
+      if (data.photos && data.photos.length > 0) {
+        // Sort new photos by sequence
+        data.photos.sort((a: Photo, b: Photo) => a.sequence - b.sequence)
+        
+        setPhotos(prev => [...prev, ...data.photos])
+        setCurrentPage(prev => prev + 1)
+        setHasMore(data.photos.length === PHOTOS_PER_PAGE)
+      } else {
+        setHasMore(false)
+      }
+    } catch (error) {
+      console.error('Error loading more photos:', error)
+      toast.error('Failed to load more photos')
+    } finally {
+      setLoadingMore(false)
+    }
+  }, [hasMore, loadingMore, currentPage, id])
+
+  // Intersection Observer for infinite scroll
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const target = entries[0]
+        if (target.isIntersecting && hasMore && !loadingMore && !loading) {
+          loadMorePhotos()
+        }
+      },
+      {
+        root: null,
+        rootMargin: '100px', // Start loading 100px before the element comes into view
+        threshold: 0.1
+      }
+    )
+
+    const currentRef = loadMoreRef.current
+    if (currentRef) {
+      observer.observe(currentRef)
+    }
+
+    return () => {
+      if (currentRef) {
+        observer.unobserve(currentRef)
+      }
+    }
+  }, [hasMore, loadingMore, loading, loadMorePhotos])
+
   // Render the collection grid with watermarked images
   const renderCollectionGrid = () => {
-    if (!collection || !collection.photos) {
+    if (!collection) {
       return null;
     }
     
-    if (collection.photos.length === 0) {
+    if (photos.length === 0) {
       return (
         <div className="text-center py-12 bg-gray-50 rounded-lg">
           <p className="text-lg text-gray-600">This collection doesn&apos;t have any photos yet.</p>
@@ -613,47 +680,92 @@ ${totalPhotos > 500 ? `\nNote: This download includes the first 500 photos out o
     }
 
     return (
-      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
-        {collection.photos.map((photo, index) => (
-          <Card key={photo.id} className="overflow-hidden group">
-            <div 
-              className="aspect-square relative cursor-pointer" 
-              onClick={() => handlePhotoClick(index)}
-            >
-              <PhotoItem 
-                photo={photo}
-                index={index}
-                collectionName={collection.name}
-                watermarkConfig={watermarkConfig}
-              />
-              <div className="absolute inset-0 bg-black opacity-0 group-hover:opacity-30 transition-opacity duration-300 pointer-events-none"></div>
-            </div>
-            <div className="p-3 flex justify-end">
-              <Button 
-                size="sm" 
-                variant="ghost" 
-                className="text-gray-700 hover:text-blue-600"
-                onClick={() => handleDownload(photo)}
-                disabled={isDownloading === photo.id}
+      <div className="space-y-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
+          {photos.map((photo, index) => (
+            <Card key={photo.id} className="overflow-hidden group">
+              <div 
+                className="aspect-square relative cursor-pointer" 
+                onClick={() => handlePhotoClick(index)}
               >
-                {isDownloading === photo.id ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Download className="h-4 w-4" />
-                )}
-              </Button>
+                <PhotoItem 
+                  photo={photo}
+                  index={index}
+                  collectionName={collection.name}
+                  watermarkConfig={watermarkConfig}
+                />
+                <div className="absolute inset-0 bg-black opacity-0 group-hover:opacity-30 transition-opacity duration-300 pointer-events-none"></div>
+              </div>
+              <div className="p-3 flex justify-end">
+                <Button 
+                  size="sm" 
+                  variant="ghost" 
+                  className="text-gray-700 hover:text-blue-600"
+                  onClick={() => handleDownload(photo)}
+                  disabled={isDownloading === photo.id}
+                >
+                  {isDownloading === photo.id ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Download className="h-4 w-4" />
+                  )}
+                </Button>
+              </div>
+            </Card>
+          ))}
+        </div>
+        
+        {/* Auto-load trigger element for intersection observer */}
+        {hasMore && (
+          <div ref={loadMoreRef} className="text-center py-8">
+            {loadingMore ? (
+              <div className="flex items-center justify-center space-x-2">
+                <Loader2 className="h-6 w-6 animate-spin text-primary" />
+                <span className="text-sm text-gray-600">Loading more photos...</span>
+              </div>
+            ) : (
+              <div className="text-sm text-gray-500">
+                Scroll to load more photos ({photos.length} of {totalPhotos})
+              </div>
+            )}
+          </div>
+        )}
+        
+        {/* Completion message */}
+        {!hasMore && totalPhotos > PHOTOS_PER_PAGE && (
+          <div className="text-center py-8">
+            <div className="text-sm text-gray-500 mb-2">
+              ✅ All {totalPhotos} photos loaded
             </div>
-          </Card>
-        ))}
+            <div className="text-xs text-gray-400">
+              You've reached the end of this collection
+            </div>
+          </div>
+        )}
+        
+        {/* Manual Load More Button (backup) - hidden by default but can be shown if needed */}
+        {hasMore && (
+          <div className="text-center mt-4">
+            <Button 
+              onClick={loadMorePhotos}
+              disabled={loadingMore}
+              variant="ghost"
+              size="sm"
+              className="text-xs text-gray-500 hover:text-gray-700"
+            >
+              Click to load more if auto-load doesn't work
+            </Button>
+          </div>
+        )}
       </div>
     )
   }
 
   // Render the lightbox with watermarked image
   const renderLightbox = () => {
-    if (!isLightboxOpen || activePhotoIndex === null || !collection || !collection.photos) return null
+    if (!isLightboxOpen || activePhotoIndex === null || !collection || photos.length === 0) return null
     
-    const activePhoto = collection.photos[activePhotoIndex]
+    const activePhoto = photos[activePhotoIndex]
     
     return (
       <div 
@@ -714,7 +826,7 @@ ${totalPhotos > 500 ? `\nNote: This download includes the first 500 photos out o
             </Button>
           )}
           
-          {collection.photos.length > 1 && activePhotoIndex < collection.photos.length - 1 && (
+          {photos.length > 1 && activePhotoIndex < photos.length - 1 && (
             <Button 
               className="absolute right-4 top-1/2 -translate-y-1/2 bg-black bg-opacity-50 text-white p-2 rounded-full"
               onClick={(e) => {
@@ -753,7 +865,7 @@ ${totalPhotos > 500 ? `\nNote: This download includes the first 500 photos out o
         <>
           <div className="flex flex-col md:flex-row md:items-center justify-between mb-6">
             <div>
-              <h1 className="text-3xl font-bold mb-2">{collection.name} <span className="text-sm text-gray-500">({collection.photos.length} photos)</span></h1>
+              <h1 className="text-3xl font-bold mb-2">{collection.name} <span className="text-sm text-gray-500">({totalPhotos} photos)</span></h1>
               {collection.description && (
                 <p className="text-gray-600 mb-4">{collection.description}</p>
               )}

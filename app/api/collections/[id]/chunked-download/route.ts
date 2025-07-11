@@ -128,10 +128,10 @@ async function processPhoto(
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   const supabase = createClient()
-  const { id } = params
+  const { id } = await params
   const url = new URL(request.url)
   const chunkIndex = parseInt(url.searchParams.get('chunk') || '0')
   const totalChunks = parseInt(url.searchParams.get('totalChunks') || '1')

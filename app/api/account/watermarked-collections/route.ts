@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
-import { db } from '@/utils/db'
+import { db, executeWithRetry } from '@/utils/db'
 
 export async function GET(request: NextRequest) {
   const supabase = createClient()
@@ -17,30 +17,57 @@ export async function GET(request: NextRequest) {
     }
 
     // Get all collections that have watermark configurations for the current user
-    const watermarkedCollections = await db.photoConfig.findMany({
-      where: {
-        userId: user.id
-      },
-      select: {
-        collection: {
-          include: {
-            photos: {
-              take: 1, // Just get one photo for the thumbnail
-              orderBy: {
-                createdAt: 'desc'
-              }
-            },
-            _count: {
-              select: {
-                photos: true
+    // Include watermark config data to reduce subsequent API calls
+    const watermarkedCollections = await executeWithRetry(() =>
+      db.photoConfig.findMany({
+        where: {
+          userId: user.id
+        },
+        select: {
+          id: true,
+          position: true,
+          dimensions: true,
+          rotation: true,
+          watermark: {
+            select: {
+              id: true,
+              url: true,
+            }
+          },
+          collection: {
+            select: {
+              id: true,
+              name: true,
+              description: true,
+              createdAt: true,
+              photos: {
+                select: {
+                  id: true,
+                  url: true,
+                  sequence: true,
+                },
+                orderBy: {
+                  sequence: 'asc'
+                },
+                take: 1 // Just get the first photo for the thumbnail
+              },
+              _count: {
+                select: {
+                  photos: true
+                }
               }
             }
           }
+        },
+        orderBy: {
+          collection: {
+            createdAt: 'desc'
+          }
         }
-      }
-    })
+      })
+    )
 
-    // Format the response
+    // Format the response with watermark config included
     const formattedCollections = watermarkedCollections.map(config => {
       const collection = config.collection
       return {
@@ -49,7 +76,15 @@ export async function GET(request: NextRequest) {
         description: collection.description,
         photoCount: collection._count.photos,
         thumbnailUrl: collection.photos.length > 0 ? collection.photos[0].url : undefined,
-        createdAt: collection.createdAt.toISOString()
+        createdAt: collection.createdAt.toISOString(),
+        // Include watermark config to avoid additional API calls
+        watermarkConfig: {
+          id: config.id,
+          position: config.position,
+          dimensions: config.dimensions,
+          rotation: config.rotation,
+          watermark: config.watermark
+        }
       }
     })
 
