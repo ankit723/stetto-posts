@@ -46,6 +46,20 @@ export async function signup(formData: FormData): Promise<AuthResult> {
   const firstName = formData.get('firstName') as string
   const lastName = formData.get('lastName') as string
 
+  if (!email || !password || !firstName || !lastName) {
+    return { error: 'All fields are required' }
+  }
+
+  const user = await db.user.findUnique({
+    where: {
+      email: email
+    }
+  })
+
+  if (user) {
+    return { error: 'User already exists' }
+  }
+
   // The actual URL that should receive the callback from Supabase
   // Make sure this matches your actual deployment URL
   const redirectTo = `${BASE_URL}/auth/callback`
